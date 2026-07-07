@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 博衣こよりと始まりの魔法使い — 化学式＝呪文の検証</title>
+<style>
+  body { margin:0; background:#0d4a7a; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#fdda83; }
+  #info { font-size:12px; color:#9cc4e0; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); }
+  #bench { display:flex; gap:8px; margin:10px 0 4px; flex-wrap:wrap; justify-content:center; max-width:880px; }
+  .elem { padding:8px 16px; border-radius:20px; border:2px solid #18a5d3; background:#10395c;
+          color:#fff; cursor:pointer; font-size:15px; font-weight:bold; transition:transform .15s, background .15s; }
+  .elem:hover { transform:translateY(-3px); background:#18507e; }
+  .elem.sel { background:#18a5d3; color:#0d2b45; box-shadow:0 0 14px #18a5d3; }
+  #cast { padding:8px 26px; border-radius:20px; border:none; background:#fdda83; color:#5c4404;
+          font-weight:bold; cursor:pointer; font-size:14px; }
+  #cast:disabled { opacity:.4; cursor:default; }
+  #log { font-size:13px; color:#fdda83; min-height:40px; text-align:center; margin:6px; line-height:1.6; max-width:760px; }
+  #log small { color:#9cc4e0; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>⚗️ こより化学RPG PoC — 元素を2つ選んで「詠唱」（反応式＝呪文）</h1>
+<div id="info">パレット: 天弓＋光炎／ 検証: 反応式DBのデータ駆動・弱点判定・炎色反応エフェクト・解説の教材化</div>
+<div id="stage"></div>
+<div id="bench"></div>
+<div><button id="cast" disabled>詠唱！</button></div>
+<div id="log">敵は「マグネシウム・ゴーレム」。素材のヒントから弱点の反応を組み立てよう</div>
+<script>
+const W=880,H=340;
+const app=new PIXI.Application({width:W,height:H,background:0x156fb3,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'博衣こよりと始まりの魔法使い', sub:'化学式＝呪文 RPG — 元素を2つ選んで詠唱（Pでピクセル化）',
+  accent:0xfdda83, accent2:0xec759e, bloomThreshold:.62 });
+
+// 背景: ラボの光
+const glow=new PIXI.Graphics();
+glow.beginFill(0x18a5d3,.25).drawEllipse(W/2,H,W*.7,140).endFill();
+app.stage.addChild(glow);
+
+// ---- 反応式DB（データ駆動） ----
+const ELEMENTS=['Mg','H₂O','O₂','Na','HCl','NaOH','Fe','H₂'];
+const REACTIONS={
+  'Mg+H₂O':{name:'爆発！',dmg:38,color:0xffffff,fire:true,
+    note:'Mgが水中の酸素を奪って激しく反応。<small>消火は乾燥砂で（水は逆効果）</small>'},
+  'Na+H₂O':{name:'大爆発！！',dmg:46,color:0xf7dc41,fire:true,
+    note:'アルカリ金属＋水。Naの炎色反応は黄色。<small>Li=赤/Cu=青緑も同様に色で覚える</small>'},
+  'H₂+O₂':{name:'爆鳴気！',dmg:42,color:0x83c2e2,fire:true,
+    note:'水素と酸素の混合気体に点火すると爆発的に反応して水になる'},
+  'HCl+NaOH':{name:'中和',heal:26,color:0x67c1af,
+    note:'酸＋塩基→塩と水。HPを回復（中和は攻撃でなく調律の魔法）'},
+  'Fe+O₂':{name:'酸化（さび）',dmg:12,debuff:true,color:0xe56322,
+    note:'鉄の酸化。敵の防御を錆びさせて低下（継続的に有利になる）'},
+};
+// 敵: マグネシウム・ゴーレム（弱点=水系反応）
+let enemyHP=100, playerHP=60, turn=0;
+
+// ---- 敵の描画 ----
+const enemy=new PIXI.Container();
+const eb=new PIXI.Graphics();
+// 接地影
+eb.beginFill(0x0d2b45,.35).drawEllipse(0,0,70,12).endFill();
+// 腕（岩の結晶塊・左右非対称）
+FXS.crystal(eb,0x738f92,26,7,11,-72,-78);
+FXS.crystal(eb,0x738f92,24,6,23,70,-84);
+// 胴（ゴツゴツの岩ブロブ＋ファセット結晶を重ねる）
+FXS.blob(eb,0x8aa8ab,58,11,.32,42,1,0,-62);
+FXS.crystal(eb,0x9ebabc,44,8,17,0,-64);
+// 胸のマグネシウム鉱床（弱点の視覚ヒント＝Totten Ch5）
+FXS.crystal(eb,0xd6ecf0,15,5,31,-20,-52);
+FXS.crystal(eb,0xd6ecf0,11,5,37,16,-44);
+// ヒビ（ジグザグ稜線）
+eb.lineStyle(2,0x5d777a,.8);
+eb.moveTo(-30,-96).lineTo(-22,-80).lineTo(-32,-64).moveTo(24,-90).lineTo(16,-74).lineTo(26,-58);
+eb.lineStyle(0);
+// 頭（不等辺クリスタル）
+FXS.crystal(eb,0x7fa3a6,32,7,7,0,-128);
+// 苔（頭上の有機ブロブ）
+FXS.blob(eb,0x6b9b6e,12,7,.5,53,.9,-12,-150);
+enemy.addChild(eb);
+// 目（発光オーブ）
+const eyes=new PIXI.Graphics();
+FXS.glowOrb(eyes,0xf4afa4,7,0xffffff,-15,-130);
+FXS.glowOrb(eyes,0xf4afa4,7,0xffffff,15,-130);
+enemy.addChild(eyes);
+enemy.position.set(W*.68,H-40);
+app.stage.addChild(enemy);
+const eLabel=new PIXI.Text('マグネシウム・ゴーレム  HP 100',{fontSize:15,fill:0xffffff,fontWeight:'bold'});
+eLabel.anchor.set(.5); eLabel.position.set(W*.68,36); app.stage.addChild(eLabel);
+const hpBar=new PIXI.Graphics(); app.stage.addChild(hpBar);
+function drawHP(){
+  hpBar.clear();
+  hpBar.beginFill(0x0d2b45).drawRoundedRect(W*.68-80,48,160,10,5).endFill();
+  hpBar.beginFill(0xec759e).drawRoundedRect(W*.68-80,48,160*Math.max(0,enemyHP)/100,10,5).endFill();
+  hpBar.beginFill(0x0d2b45).drawRoundedRect(20,48,120,10,5).endFill();
+  hpBar.beginFill(0x67c1af).drawRoundedRect(20,48,120*Math.max(0,playerHP)/60,10,5).endFill();
+}
+drawHP();
+const pLabel=new PIXI.Text('こより HP',{fontSize:13,fill:0xffffff}); pLabel.position.set(20,28); app.stage.addChild(pLabel);
+
+// こより（詠唱者）
+const koyo=new PIXI.Container();
+const kb=new PIXI.Graphics();
+// 接地影
+kb.beginFill(0x0d2b45,.3).drawEllipse(0,0,24,5).endFill();
+// 白衣（裾が広がるベジェコート）
+kb.beginFill(0xffffff);
+kb.moveTo(-13,-44); kb.bezierCurveTo(-22,-22,-26,-4,-19,0);
+kb.lineTo(19,0); kb.bezierCurveTo(26,-4,22,-22,13,-44);
+kb.closePath().endFill();
+kb.beginFill(0xec759e,.35).drawRect(-19,-5,38,3).endFill();  // 裾ライン
+kb.lineStyle(1.5,0xd8b0c0,.7).moveTo(0,-40).lineTo(0,-6); kb.lineStyle(0); // 前合わせ
+// サイドテール（左右ベジェの房）
+kb.beginFill(0xf29ab8);
+kb.moveTo(-13,-68); kb.bezierCurveTo(-34,-62,-38,-30,-26,-12);
+kb.bezierCurveTo(-30,-36,-24,-54,-11,-58); kb.closePath();
+kb.moveTo(13,-68); kb.bezierCurveTo(34,-62,38,-30,26,-12);
+kb.bezierCurveTo(30,-36,24,-54,11,-58); kb.closePath().endFill();
+// 顔
+kb.beginFill(0xfce8ec).drawCircle(0,-58,16).endFill();
+// 前髪（ギザベジェ）
+kb.beginFill(0xf29ab8);
+kb.moveTo(-16,-60); kb.quadraticCurveTo(0,-80,16,-60);
+kb.quadraticCurveTo(10,-66,6,-60); kb.quadraticCurveTo(2,-68,-2,-60);
+kb.quadraticCurveTo(-8,-67,-16,-60); kb.closePath().endFill();
+// 目・口
+kb.beginFill(0x8a3a5a).drawCircle(-6,-55,2.2).drawCircle(6,-55,2.2).endFill();
+kb.lineStyle(1.5,0xc96a86).moveTo(-2,-49).quadraticCurveTo(0,-47,2,-49); kb.lineStyle(0);
+// 杖
+kb.lineStyle(3,0xc9a06c).moveTo(18,-26).lineTo(33,-76); kb.lineStyle(0);
+koyo.addChild(kb);
+// 杖先の星（発光）
+const wandStar=new PIXI.Graphics();
+FXS.burstStar(wandStar,0xfdda83,10,5,.45,7);
+FXS.glowOrb(wandStar,0xfdda83,4);
+wandStar.position.set(34,-80);
+koyo.addChild(wandStar);
+koyo.position.set(140,H-40); app.stage.addChild(koyo);
+
+// ---- パーティクル ----
+const parts=[];
+function burst(x,y,color,n,spd,grav=.12){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*4).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.3+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:1,grav});
+    app.stage.addChild(g);
+  }
+}
+function floatText(x,y,txt,color){
+  const t=new PIXI.Text(txt,{fontSize:26,fill:color,fontWeight:'bold',stroke:0x0d2b45,strokeThickness:4});
+  t.anchor.set(.5); t.position.set(x,y); app.stage.addChild(t);
+  parts.push({g:t,vx:0,vy:-1.4,life:1.4,grav:0});
+}
+let shake=0;
+
+// ---- UI ----
+const bench=document.getElementById('bench');
+const castBtn=document.getElementById('cast');
+const log=document.getElementById('log');
+let sel=[];
+for(const el of ELEMENTS){
+  const b=document.createElement('button');
+  b.className='elem'; b.textContent=el;
+  b.onclick=()=>{
+    if(sel.includes(el)) sel=sel.filter(s=>s!==el);
+    else { sel.push(el); if(sel.length>2) sel.shift(); }
+    [...bench.children].forEach(c=>c.classList.toggle('sel',sel.includes(c.textContent)));
+    castBtn.disabled = sel.length!==2;
+  };
+  bench.appendChild(b);
+}
+castBtn.onclick=()=>{
+  if(!FX.playing) return;
+  const key1=sel[0]+'+'+sel[1], key2=sel[1]+'+'+sel[0];
+  const r=REACTIONS[key1]||REACTIONS[key2];
+  castBtn.disabled=true; sel=[];
+  [...bench.children].forEach(c=>c.classList.remove('sel'));
+  if(!r){
+    log.innerHTML='……何も起こらない（この組合せは反応しない）。<small>不発も学び</small>';
+    enemyAttack(); return;
+  }
+  // 詠唱演出 → 命中
+  burst(koyo.x, koyo.y-50, 0x18a5d3, 12, 3, 0);
+  setTimeout(()=>{
+    if(r.heal){ playerHP=Math.min(60,playerHP+r.heal); floatText(koyo.x,koyo.y-90,'+'+r.heal,0x67c1af);
+      burst(koyo.x,koyo.y-50,r.color,20,3); }
+    else {
+      let dmg=r.dmg;
+      const weak = r.fire && true; // ゴーレム弱点: 水系(爆発)反応
+      enemyHP-=dmg; shake=r.dmg>=38?12:6;
+      burst(enemy.x,enemy.y-70,r.color,30,6);
+      if(r.fire) burst(enemy.x,enemy.y-70,0xe56322,20,5);
+      floatText(enemy.x,enemy.y-160,'-'+dmg+(weak?' 弱点!':''),0xf7dc41);
+      enemy.scale.set(1.08); setTimeout(()=>enemy.scale.set(1),120);
+    }
+    eLabel.text=`マグネシウム・ゴーレム  HP ${Math.max(0,enemyHP)}`;
+    drawHP();
+    log.innerHTML=`<b>${sel1Label(key1)} → ${r.name}</b><br>${r.note}`;
+    if(enemyHP<=0){
+      log.innerHTML='🎉 撃破！ 反応の原理はラボでこよりが解説（報酬空間）。';
+      FX.result({ title:'ゴーレム撃破！', lines:['化学の知識が勝利の鍵','クリア報酬: こよりの反応解説（ラボにて）'] });
+      return;
+    }
+    setTimeout(enemyAttack, 900);
+  }, 450);
+};
+function sel1Label(k){ return k.replace('+',' ＋ '); }
+function enemyAttack(){
+  turn++;
+  const d=8+Math.floor(Math.random()*6);
+  playerHP-=d; shake=5;
+  burst(koyo.x,koyo.y-40,0x9ebabc,12,4);
+  floatText(koyo.x,koyo.y-90,'-'+d,0xf4afa4);
+  drawHP();
+  if(playerHP<=0){
+    log.innerHTML='😵 敗北… 「中和(HCl+NaOH)」での回復も試そう';
+    FX.result({ title:'敗北…', lines:['ヒント: HCl＋NaOH の中和でHP回復','Mg・Naは水と激しく反応する'] });
+  }
+}
+
+app.ticker.add(dt=>{
+  for(const p of parts){
+    p.vy+=p.grav*dt; p.g.x+=p.vx*dt; p.g.y+=p.vy*dt;
+    p.life-=.025*dt; p.g.alpha=Math.min(1,p.life);
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  enemy.y = H-40 + Math.sin(performance.now()/500)*4;   // 敵のアイドル
+  koyo.y  = H-40 + Math.sin(performance.now()/430+2)*3; // こよりのアイドル
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

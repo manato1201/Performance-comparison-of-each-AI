@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 記憶トリプレット — 3枠FIFO×3手クリアの検証</title>
+<style>
+  body { margin:0; background:#513738; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:15px; margin:12px 0 4px; color:#f7df51; }
+  #info { font-size:12px; color:#d2b5a9; margin-bottom:8px; text-align:center; line-height:1.6; }
+  #slots { display:flex; gap:8px; margin:8px 0; }
+  .slot { width:120px; height:34px; border:2px dashed #97909e; border-radius:8px;
+          display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .slot.filled { border-style:solid; border-color:#eab031; background:#eab03122; }
+  #hud { font-size:14px; margin:4px 0; }
+  #hud b { color:#f7df51; }
+  #stage { border-radius:8px; overflow:hidden; margin-top:6px; }
+  #msg { min-height:22px; font-size:13px; color:#f7df51; margin-top:8px; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🧠 記憶トリプレット PoC</h1>
+<div id="info">
+  プレビュー中に対象をクリックして<b>3つまで記憶</b>（4つ目で最初を忘れる）。<br>
+  プレビュー後、記憶していない罠・ギミックは<b>見えなくなる</b>。隣接マスをクリックして<b>3手以内</b>にゴールへ。
+</div>
+<div id="slots"><div class="slot"></div><div class="slot"></div><div class="slot"></div></div>
+<div id="hud">残り手数: <b id="moves">3</b>　ステージ: <b id="stg">1</b></div>
+<div id="stage"></div>
+<div id="msg"></div>
+
+<script>
+const CELL = 72, GRID = 6;
+const app = new PIXI.Application({ width: CELL*GRID, height: CELL*GRID, background: 0x3c3c47 });
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'記憶トリプレット', sub:'三つまでしか、覚えられない（Pでピクセル化）',
+  accent:0xf7df51, accent2:0x82a0b3, bloomThreshold:.7, crt:.8,
+  onStart:()=>buildStage() });
+
+// パレット: 黄昏時 / 月の雫
+const COL = { light:0xf7df51, ui:0xeab031, warn:0xe07b24, dim:0x97909e,
+              floor1:0x82a0b3, floor2:0x3c6f98, dark:0x3c3c47, player:0xffefc8 };
+
+// ステージ定義: S=start G=goal T=trap M=全体記憶アイテム .=床
+// 可解性: 各面ともスタート→ゴールのマンハッタン距離が3以下で、罠を避ける3手ルートが存在する
+// 面3はゴールまで4手 → 全体記憶アイテム(M)を2手で取り制限解除するのが想定解
+const STAGES = [
+  [ "S.T...",
+    ".T....",
+    ".G....",
+    "......",
+    "......",
+    "......" ],
+  [ "......",
+    ".S.T..",
+    "..T...",
+    "..G...",
+    "......",
+    "......" ],
+  [ "M.....",
+    ".S....",
+    "T.T...",
+    "...T..",
+    "..G...",
+    "......" ],
+];
+
+let stageIdx = 0, memory = [], movesLeft = 3, totalRecall = false;
+let entities = [], playerPos = {x:0,y:0}, phase = 'preview';
+const board = new PIXI.Container(); app.stage.addChild(board);
+const msgEl = document.getElementById('msg');
+const slotEls = [...document.querySelectorAll('.slot')];
+
+function say(t){ msgEl.textContent = t; }
+function updateSlots(){
+  slotEls.forEach((el,i)=>{
+    const m = memory[i];
+    el.textContent = m ? `${m.icon} ${m.label} (${m.x},${m.y})` : '（空き）';
+    el.classList.toggle('filled', !!m);
+  });
+}
+function memorize(ent){
+  if (phase !== 'preview') return;
+  if (memory.includes(ent)) return;
+  memory.push(ent);
+  if (memory.length > 3) { const f = memory.shift(); say(`「${f.label}」を忘れた…（4つ目を覚えたため）`); }
+  else say(`「${ent.label}」を記憶した`);
+  updateSlots();
+}
+
+function buildStage(){
+  board.removeChildren(); entities = []; memory = []; movesLeft = 3; totalRecall = false;
+  phase = 'preview'; updateSlots();
+  document.getElementById('stg').textContent = stageIdx+1;
+  document.getElementById('moves').textContent = movesLeft;
+  const map = STAGES[stageIdx];
+
+  // 床
+  for (let y=0;y<GRID;y++) for (let x=0;x<GRID;x++){
+    const t = new PIXI.Graphics();
+    t.beginFill((x+y)%2 ? COL.floor1 : COL.floor2).drawRect(0,0,CELL-2,CELL-2).endFill();
+    t.position.set(x*CELL+1, y*CELL+1);
+    t.eventMode = 'static';
+    t.on('pointertap', ()=> tryMove(x,y));
+    board.addChild(t);
+  }
+  // エンティティ
+  for (let y=0;y<GRID;y++) for (let x=0;x<GRID;x++){
+    const c = map[y][x];
+    if (c === 'S') playerPos = {x,y};
+    if (c === 'T') addEntity(x,y,'罠','⚡',COL.warn,'trap');
+    if (c === 'G') addEntity(x,y,'ゴール','⭐',COL.light,'goal');
+    if (c === 'M') addEntity(x,y,'全体記憶','🔮',0xc5a3e0,'recall');
+  }
+  // プレイヤー
+  const p = new PIXI.Graphics();
+  p.beginFill(COL.player).drawCircle(CELL/2, CELL/2, CELL/3).endFill();
+  p.name='player'; board.addChild(p); movePlayerGfx(true);
+
+  say('プレビュー中… 覚える対象を3つ選べ（5秒）');
+  setTimeout(()=> {
+    if (phase !== 'preview') return;
+    phase = 'play';
+    for (const e of entities) refreshVisibility(e);
+    say('行動開始！ 3手以内にゴールへ（記憶していない罠は見えない）');
+  }, 5000);
+}
+function addEntity(x,y,label,icon,color,kind){
+  const g = new PIXI.Container();
+  const bg = new PIXI.Graphics();
+  bg.beginFill(color,.9).drawRoundedRect(8,8,CELL-18,CELL-18,10).endFill();
+  const tx = new PIXI.Text(icon,{fontSize:28}); tx.anchor.set(.5); tx.position.set(CELL/2-1,CELL/2-1);
+  g.addChild(bg,tx); g.position.set(x*CELL,y*CELL);
+  g.eventMode='static';
+  const ent = {x,y,label,icon,kind,g};
+  g.on('pointertap',(ev)=>{ ev.stopPropagation(); memorize(ent); if(phase==='play') tryMove(x,y); });
+  board.addChild(g); entities.push(ent);
+}
+function refreshVisibility(e){
+  // 記憶している or 全体記憶モード or ゴールは常時表示（見せて拒絶: Totten Ch7）
+  const visible = totalRecall || memory.includes(e) || e.kind==='goal';
+  e.g.alpha = visible ? 1 : 0;
+}
+let pTarget={x:0,y:0};
+function movePlayerGfx(snap=false){
+  const p = board.getChildByName('player');
+  pTarget={x:playerPos.x*CELL, y:playerPos.y*CELL};
+  if(snap) p.position.set(pTarget.x,pTarget.y);
+}
+// スライド移動＋スカッシュ、ゴールの明滅（ビジュアル強化）
+app.ticker.add(dt=>{
+  const p=board.getChildByName('player');
+  if(p){
+    p.x+=(pTarget.x-p.x)*.22*dt; p.y+=(pTarget.y-p.y)*.22*dt;
+    const stretch=Math.min(.18,(Math.abs(pTarget.x-p.x)+Math.abs(pTarget.y-p.y))*.004);
+    p.scale.set(1+stretch,1-stretch*.8);
+  }
+  for(const e of entities)
+    if(e.kind==='goal' && phase==='play')
+      e.g.alpha=.75+Math.sin(performance.now()/280)*.25;
+});
+function tryMove(x,y){
+  if (phase !== 'play') return;
+  const dx = Math.abs(x-playerPos.x), dy = Math.abs(y-playerPos.y);
+  if (dx+dy !== 1) return;                    // 上下左右のみ
+  playerPos = {x,y}; movePlayerGfx();
+  if (!totalRecall) movesLeft--;
+  document.getElementById('moves').textContent = totalRecall ? '∞' : movesLeft;
+
+  const hit = entities.find(e=>e.x===x && e.y===y);
+  if (hit) {
+    if (hit.kind==='trap'){ say(`⚡ 罠を踏んだ！ ${memory.includes(hit)?'（覚えていたのに…）':'（記憶していなかった）'} 最初に戻される`); return reset(); }
+    if (hit.kind==='goal'){
+      say('⭐ クリア！ 次のステージへ');
+      stageIdx = (stageIdx+1) % STAGES.length;
+      setTimeout(buildStage, 1200); phase='done'; return;
+    }
+    if (hit.kind==='recall'){
+      totalRecall = true;
+      entities.forEach(refreshVisibility);
+      document.getElementById('moves').textContent='∞';
+      say('🔮 全体記憶モード！ 制限が解除され、全てが見える');
+    }
+  }
+  if (!totalRecall && movesLeft <= 0 && phase==='play'){
+    say('手数切れ… 3手で辿り着けなかった。最初に戻される'); reset();
+  }
+}
+function reset(){ phase='done'; setTimeout(buildStage, 1400); }
+// buildStage() は FX.attach の onStart（タイトル画面クリック後）から呼ばれる
+</script>
+</body>
+</html>

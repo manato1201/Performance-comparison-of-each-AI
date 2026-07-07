@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 猫監視・撃退システム — 検知ロジックのシミュレータ</title>
+<style>
+  body { margin:0; font-family:"Yu Gothic UI",sans-serif; background:#d2ebee;
+         display:flex; justify-content:center; min-height:100vh; }
+  #wrap { width:min(900px,96vw); padding:14px 0 40px; }
+  h1 { font-size:16px; color:#155a80; margin:6px 0 2px; }
+  .sub { font-size:12px; color:#4a7c8c; margin-bottom:10px; }
+  #panel { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+  canvas { border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.15); background:#3d5a3d; }
+  #side { flex:1; min-width:260px; }
+  .box { background:#fff; border-radius:12px; padding:10px 14px; margin-bottom:10px;
+         box-shadow:0 3px 10px rgba(0,0,0,.08); }
+  .box h2 { font-size:13px; color:#155a80; margin:0 0 6px; }
+  #log { height:200px; overflow-y:auto; font-size:12px; line-height:1.8; }
+  .cat { color:#2a8bc0; } .human { color:#c65244; } .rep { color:#888; }
+  #led { display:inline-block; width:12px; height:12px; border-radius:50%; background:#ccc;
+         vertical-align:middle; transition:background .2s, box-shadow .2s; }
+  #led.on { background:#7aab34; box-shadow:0 0 10px #7aab34; }
+  #led.alert { background:#d9383c; box-shadow:0 0 12px #d9383c; }
+  .stat { font-size:12px; margin:3px 0; }
+  label { font-size:12px; }
+  /* Scene遷移: 端末ブート画面（アンバーターミナル） */
+  #bootScene { position:fixed; inset:0; z-index:50; background:#0d0b04; color:#e8b23a;
+    font-family:Consolas,'Courier New',monospace; padding:44px; box-sizing:border-box;
+    transition:opacity .8s, visibility .8s; }
+  #bootScene.hidden { opacity:0; visibility:hidden; }
+  #bootScene .head { color:#f7dc41; font-size:18px; letter-spacing:.35em;
+    border-bottom:1px solid #5a4a18; padding-bottom:10px; margin-bottom:16px;
+    text-shadow:0 0 14px rgba(247,220,65,.6); }
+  #bootScene .line { font-size:13px; line-height:2; text-shadow:0 0 8px rgba(232,178,58,.45); }
+  #bootScene .ok { color:#7aab34; }
+  #bootScene::after { content:''; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg, transparent 0 2px, rgba(0,0,0,.18) 2px 4px); }
+</style>
+</head>
+<body>
+<div id="bootScene">
+  <div class="head">▚ CAT GUARD OS v0.1 — SYSTEM BOOT</div>
+  <div id="bootLines"></div>
+</div>
+<script>
+(function(){
+  const LINES=[
+    ['GPIO バス初期化', 'OK'],
+    ['CdSセル（照度） キャリブレーション', 'OK'],
+    ['温度センサー DS18B20 応答確認', 'OK'],
+    ['カメラモジュール 起動', 'OK'],
+    ['動体検知エンジン ロード', 'OK'],
+    ['威嚇音源「掃除機」 デコード', 'OK'],
+    ['通知チャネル (LINE/Discord) 接続', 'OK'],
+    ['監視シーケンス 開始', 'READY'],
+  ];
+  const el=document.getElementById('bootLines');
+  let i=0;
+  const iv=setInterval(()=>{
+    if(i>=LINES.length){
+      clearInterval(iv);
+      setTimeout(()=>document.getElementById('bootScene').classList.add('hidden'), 500);
+      return;
+    }
+    const [txt,st]=LINES[i++];
+    el.insertAdjacentHTML('beforeend',
+      `<div class="line">[${String(i).padStart(2,'0')}] ${txt} ............ <span class="ok">${st}</span></div>`);
+  }, 260);
+})();
+</script>
+<div id="wrap">
+  <h1>🐈 猫監視・撃退システム PoC（シミュレータ）</h1>
+  <div class="sub">検証: 動体検知→サイズ判定（猫/人）→撮影通知/威嚇音→定期報告、CdS昼夜モード。※実機はRaspberry Pi＋PySide6予定</div>
+  <div id="panel">
+    <canvas id="cam" width="520" height="360"></canvas>
+    <div id="side">
+      <div class="box">
+        <h2>📟 デバイス状態 <span id="led"></span></h2>
+        <div class="stat">CdSセル（照度）: <b id="lux">昼</b>　<label><input type="checkbox" id="night"> 夜にする</label></div>
+        <div class="stat">温度センサー: <b id="temp">24.0</b>℃</div>
+        <div class="stat">検知ライン: 画面中央の黄色帯</div>
+        <div class="stat">威嚇: <label><input type="checkbox" id="snd" checked> 掃除機音（ビープで模擬）</label></div>
+      </div>
+      <div class="box">
+        <h2>📱 スマホ通知ログ（LINE想定）</h2>
+        <div id="log"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('cam'), ctx=cv.getContext('2d');
+const logEl=document.getElementById('log'), led=document.getElementById('led');
+let night=false, t=0, ledTimer=0;
+document.getElementById('night').onchange=e=>{
+  night=e.target.checked;
+  document.getElementById('lux').textContent=night?'夜(赤外線モード)':'昼';
+};
+// ビープ（掃除機音の模擬: ノイズ）
+let audio;
+function vacuum(){
+  if(!document.getElementById('snd').checked) return;
+  audio=audio||new AudioContext();
+  const len=audio.sampleRate*.6, buf=audio.createBuffer(1,len,audio.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.exp(-i/len*3)*.3;
+  const src=audio.createBufferSource(); src.buffer=buf;
+  const f=audio.createBiquadFilter(); f.type='lowpass'; f.frequency.value=400;
+  src.connect(f).connect(audio.destination); src.start();
+}
+function addLog(cls,txt){
+  const d=document.createElement('div');
+  d.className=cls;
+  d.innerHTML=`<b>${new Date().toLocaleTimeString()}</b> ${txt}`;
+  logEl.prepend(d);
+  while(logEl.children.length>40) logEl.lastChild.remove();
+}
+
+// ---- 侵入者シミュレーション ----
+const actors=[];
+function spawn(){
+  const isCat=Math.random()<.65;
+  actors.push({
+    kind:isCat?'cat':'human',
+    x:-60, y:isCat?280:200,
+    h:isCat?38:130,           // サイズ判定の根拠（高さ）
+    speed:.6+Math.random()*.9,
+    detected:false, flash:0,
+  });
+}
+setInterval(()=>{ if(actors.length<3 && Math.random()<.7) spawn(); }, 2600);
+// 定期報告（30秒ごと想定→PoCでは12秒）
+setInterval(()=>{
+  addLog('rep',`🕒 定期報告: 異常なし／温度 ${document.getElementById('temp').textContent}℃／照度 ${night?'低':'高'}`);
+},12000);
+setInterval(()=>{ document.getElementById('temp').textContent=(23+Math.random()*3).toFixed(1); },5000);
+
+function drawCat(a){
+  ctx.save(); ctx.translate(a.x,a.y);
+  const g=night?'#9adf9a':'#4a4a55';
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.ellipse(0,0,26,15,0,0,7); ctx.fill();                 // 体
+  ctx.beginPath(); ctx.ellipse(24,-12,11,10,0,0,7); ctx.fill();              // 頭
+  ctx.beginPath(); ctx.moveTo(17,-19); ctx.lineTo(20,-28); ctx.lineTo(25,-20); ctx.fill(); // 耳
+  ctx.beginPath(); ctx.moveTo(30,-19); ctx.lineTo(34,-27); ctx.lineTo(36,-18); ctx.fill();
+  ctx.strokeStyle=g; ctx.lineWidth=4;
+  ctx.beginPath(); ctx.moveTo(-24,-2); ctx.quadraticCurveTo(-38,-8,-34,-20); ctx.stroke(); // 尻尾
+  // 歩き足
+  for(let i=0;i<4;i++){
+    const p=Math.sin(t*.2+i*1.7)*4;
+    ctx.fillRect(-16+i*11, 12, 4, 8+p);
+  }
+  ctx.restore();
+}
+function drawHuman(a){
+  ctx.save(); ctx.translate(a.x,a.y);
+  const g=night?'#9adf9a':'#3a3a48';
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.arc(0,-52,14,0,7); ctx.fill();                        // 頭
+  ctx.fillRect(-12,-38,24,52);                                               // 胴
+  const p=Math.sin(t*.15)*8;
+  ctx.fillRect(-10,14,8,36+p); ctx.fillRect(3,14,8,36-p);                    // 脚
+  ctx.restore();
+}
+
+function loop(){
+  t++;
+  // 背景（庭）
+  ctx.fillStyle=night?'#101c14':'#3d5a3d';
+  ctx.fillRect(0,0,520,360);
+  ctx.fillStyle=night?'#0c150f':'#33502f';
+  ctx.fillRect(0,320,520,40);
+  if(night){ // 赤外線ノイズ
+    ctx.fillStyle='rgba(150,255,150,.05)';
+    for(let i=0;i<40;i++) ctx.fillRect(Math.random()*520,Math.random()*360,2,2);
+  }
+  // 検知ライン
+  ctx.fillStyle='rgba(255,220,60,.18)';
+  ctx.fillRect(230,0,60,360);
+  ctx.strokeStyle='rgba(255,220,60,.6)'; ctx.setLineDash([6,6]);
+  ctx.strokeRect(230,0,60,360); ctx.setLineDash([]);
+
+  for(const a of actors){
+    a.x+=a.speed;
+    (a.kind==='cat'?drawCat:drawHuman)(a);
+    // 動体検知（ライン通過）→サイズ判定
+    if(!a.detected && a.x>240 && a.x<280){
+      a.detected=true; a.flash=1; ledTimer=30;
+      const isCat=a.h<80; // 高さ閾値でサイズ判定
+      if(isCat){
+        addLog('cat','🐈 <b>猫を検知</b>（推定高 '+a.h+'cm）📷 写真を送信 →「またあの猫が来ています」＋🔊 掃除機音で威嚇');
+        vacuum(); a.speed*=2.4; // 威嚇で逃げる
+        led.className='on';
+      } else {
+        addLog('human','🧍 <b>人を検知</b>（推定高 '+a.h+'cm）📷 写真を送信 →「玄関付近に人がいます」');
+        led.className='alert';
+      }
+    }
+    // 検知フラッシュ（バウンディングボックス）
+    if(a.flash>0){
+      a.flash-=.02;
+      ctx.strokeStyle=`rgba(${a.h<80?'42,139,192':'198,82,68'},${a.flash})`;
+      ctx.lineWidth=3;
+      const bw=a.kind==='cat'?76:44, bh=a.kind==='cat'?52:120;
+      ctx.strokeRect(a.x-40, a.y-(a.kind==='cat'?36:70), bw, bh);
+      ctx.font='11px sans-serif';
+      ctx.fillStyle=`rgba(255,255,255,${a.flash})`;
+      ctx.fillText(a.h<80?'CAT '+(a.flash*100|0)+'%':'HUMAN '+(a.flash*100|0)+'%', a.x-40, a.y-(a.kind==='cat'?42:76));
+    }
+  }
+  // 画面外へ
+  for(let i=actors.length-1;i>=0;i--) if(actors[i].x>580) actors.splice(i,1);
+  // LED戻し
+  if(ledTimer>0){ ledTimer--; if(ledTimer===0) led.className=''; }
+  requestAnimationFrame(loop);
+}
+addLog('rep','✅ システム起動。動体検知を開始します');
+loop();
+</script>
+</body>
+</html>

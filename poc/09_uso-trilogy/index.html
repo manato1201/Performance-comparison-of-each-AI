@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 嘘三部作 第3作 フィクション・ハンター — フェイク判定×根拠選択の検証</title>
+<style>
+  body { margin:0; font-family:"Yu Gothic UI",sans-serif; background:#2c628d;
+         display:flex; justify-content:center; min-height:100vh; }
+  #wrap { width:min(640px,94vw); padding:16px 0 60px; }
+  h1 { font-size:16px; color:#f5fbfe; margin:8px 0 2px; }
+  .sub { font-size:12px; color:#cfe3e9; margin-bottom:10px; }
+  .card { background:#fff; border-radius:14px; padding:16px 18px; box-shadow:0 6px 20px rgba(0,0,0,.25);
+          animation:slidein .5s; }
+  @keyframes slidein { from{opacity:0; transform:translateY(24px) rotate(1deg);} to{opacity:1;} }
+  .feed-head { display:flex; align-items:center; gap:8px; font-size:12px; color:#666; }
+  .avatar { width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg,#7da9d4,#51b6cc);
+            display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .headline { font-size:15px; font-weight:bold; margin:10px 0 6px; color:#222; line-height:1.6; }
+  .body { font-size:13px; color:#444; line-height:1.7; }
+  .stats { font-size:11px; color:#999; margin-top:8px; }
+  #timer { height:8px; background:#cfe3e9; border-radius:4px; margin:12px 0; overflow:hidden; }
+  #timer div { height:100%; background:#e07b24; width:100%; }
+  .btns { display:flex; gap:8px; margin-top:12px; }
+  .btns button { flex:1; padding:10px; border:none; border-radius:10px; cursor:pointer; font-size:14px; font-weight:bold; }
+  #btnReal { background:#d4e8c6; } #btnFake { background:#f8c9c9; }
+  .btns button:hover { transform:translateY(-2px); }
+  #reasons { margin-top:10px; display:none; }
+  #reasons button { display:block; width:100%; text-align:left; margin:5px 0; padding:9px 12px;
+    border:2px solid #7da9d4; border-radius:9px; background:#fff; cursor:pointer; font-size:12.5px; }
+  #reasons button:hover { background:#eef5fb; }
+  #verdict { margin-top:10px; padding:10px 14px; border-radius:10px; font-size:13px; line-height:1.7; display:none; }
+  #verdict.ok { background:#e7f4dd; border-left:5px solid #7aab34; }
+  #verdict.ng { background:#fdeaea; border-left:5px solid #d9383c; }
+  #score { color:#fff; font-size:13px; margin:8px 0; }
+  #next { display:none; margin-top:10px; padding:9px 26px; border:none; border-radius:18px;
+          background:#2c628d; color:#fff; cursor:pointer; }
+  /* Scene遷移: ブリーフィング画面 */
+  #titleScene { position:fixed; inset:0; z-index:50; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    background:radial-gradient(ellipse at 50% 35%, #23415c, #0a1420 75%);
+    transition:opacity .9s, visibility .9s; }
+  #titleScene.hidden { opacity:0; visibility:hidden; }
+  #titleScene h1 { color:#fff; font-size:34px; letter-spacing:.12em; margin:0;
+    text-shadow:0 0 22px #7da9d4, 0 0 60px #2c628d; }
+  #titleScene .sub { color:#a8c8e0; font-size:13.5px; margin:16px 0 28px; line-height:2.1; }
+  #titleScene button { padding:12px 46px; font-size:15px; border:1px solid #7da9d4; border-radius:24px;
+    background:rgba(125,169,212,.12); color:#cfe3e9; cursor:pointer; letter-spacing:.1em; transition:all .25s; }
+  #titleScene button:hover { background:#7da9d4; color:#0a1420; box-shadow:0 0 28px rgba(125,169,212,.8); }
+  #titleScene .badge { display:inline-block; border:1px solid #51b6cc; color:#51b6cc; border-radius:4px;
+    padding:2px 12px; font-size:11px; letter-spacing:.3em; margin-bottom:14px; }
+</style>
+</head>
+<body>
+<div id="titleScene">
+  <div class="badge">CLASSIFIED — 対策官専用端末</div>
+  <h1>FICTION HUNTER</h1>
+  <div class="sub">嘘三部作 第3作 — フェイクニュース対策官 着任ブリーフィング<br>
+  真偽の判定だけでは足りない。<b>「なぜ疑ったか」</b>まで答えよ。</div>
+  <button onclick="document.getElementById('titleScene').classList.add('hidden')">▶ 任務を開始する</button>
+</div>
+<div id="wrap">
+  <h1>🔎 フィクション・ハンター PoC（嘘三部作 第3作）</h1>
+  <div class="sub">検証: 本物/フェイク判定＋「疑うべき根拠」の選択（メタ認知）・時間制限・SNSフィードUI</div>
+  <div id="score">スコア: 0　判定精度: - </div>
+  <div id="timer"><div></div></div>
+  <div class="card" id="card"></div>
+  <button id="next">次の投稿へ ▶</button>
+</div>
+<script>
+const POSTS=[
+  { user:'速報ニュースJP', icon:'📰', fake:true,
+    head:'【速報】市の水道水に基準値100倍の有害物質。市は「公表しない方針」と関係者',
+    body:'匿名の内部告発によると…。画像は浄水場の様子。拡散希望！',
+    stats:'リポスト 48.2万 · いいね 12.1万 · 3時間前',
+    reasons:[
+      {t:'出典が「匿名の関係者」のみで一次情報がない', ok:true},
+      {t:'リポスト数が多すぎる', ok:false},
+      {t:'行政の話題だから', ok:false}],
+    explain:'正解: フェイク。「匿名の関係者」だけを根拠に、緊急性と拡散依頼で焦らせるのは典型パターン。数字の異常さ（基準値100倍で無症状）も矛盾。' },
+  { user:'気象庁(公式)', icon:'🌀', fake:false,
+    head:'台風12号は明日午前、九州南部に接近する見込みです。最新の進路予報図を確認してください',
+    body:'今後の情報に注意し、早めの避難準備を。',
+    stats:'リポスト 3.1万 · いいね 8千 · 40分前',
+    reasons:[
+      {t:'公式アカウントで、一次情報の発信元である', ok:true},
+      {t:'文章が短いから本物', ok:false},
+      {t:'画像が付いていないから本物', ok:false}],
+    explain:'正解: 本物。発信元がその情報の一次ソース（気象庁）である点が核。文の長短や画像の有無は真偽の根拠にならない。' },
+  { user:'まとめアンテナ', icon:'🧵', fake:true,
+    head:'有名俳優Aさん、昨夜の生放送で「引退」を電撃発表！ スタジオ騒然の瞬間映像',
+    body:'※動画はリンク先で。信じられない表情です…',
+    stats:'リポスト 9.8万 · いいね 3.4万 · 1時間前',
+    reasons:[
+      {t:'「昨夜の生放送」が実在したか他ソースで確認できない', ok:true},
+      {t:'俳優の名前がイニシャルだから', ok:false},
+      {t:'まとめサイトはすべて嘘だから', ok:false}],
+    explain:'正解: フェイク。大事件なのに報じているのが1アカウントだけ＝クロスチェックで崩れる。イニシャル表記や媒体の種類は決め手ではない。' },
+  { user:'研究者bot', icon:'🧪', fake:true,
+    head:'「チョコレートを毎日食べると記憶力が2倍になる」最新論文で判明',
+    body:'ハーバードの研究チームが発表（n=12）。甘党に朗報！',
+    stats:'リポスト 5.5万 · いいね 9.9万 · 6時間前',
+    reasons:[
+      {t:'被験者12人の予備研究から「2倍」と断定している', ok:true},
+      {t:'チョコレートに効果があるはずがない', ok:false},
+      {t:'botだから', ok:false}],
+    explain:'正解: フェイク（誇張）。研究自体は実在しても、極小サンプルの結果を断定形の見出しにするのは誇張型フェイクの典型。「ありえない」という直感やbotかどうかは根拠にならない。' },
+  { user:'市役所防災課', icon:'🏛', fake:false,
+    head:'【訓練】明日10時に緊急速報メールの試験配信を行います。実際の災害ではありません',
+    body:'訓練配信です。驚かれないようお願いします。詳細は市サイトへ。',
+    stats:'リポスト 800 · いいね 1.2千 · 昨日',
+    reasons:[
+      {t:'発信元が実在の公的機関で、公式サイトでも同告知がある', ok:true},
+      {t:'いいねが少ないから本物', ok:false},
+      {t:'「訓練」と書いてあるから本物', ok:false}],
+    explain:'正解: 本物。複数の公式チャネルで突き合わせできることが根拠。エンゲージメントの多寡は真偽と無関係。' },
+];
+let idx=0, score=0, correct=0, answered=0, judged=null, timeLeft=100, timerIv;
+const card=document.getElementById('card');
+const nextBtn=document.getElementById('next');
+
+function show(){
+  const p=POSTS[idx];
+  judged=null; timeLeft=100;
+  card.innerHTML=`
+    <div class="feed-head"><div class="avatar">${p.icon}</div><div><b>${p.user}</b><br>${p.stats}</div></div>
+    <div class="headline">${p.head}</div>
+    <div class="body">${p.body}</div>
+    <div class="btns">
+      <button id="btnReal">✅ 本物</button>
+      <button id="btnFake">🚨 フェイク</button>
+    </div>
+    <div id="reasons"><b style="font-size:12px">疑うべき（信じるべき）根拠はどれ？</b></div>
+    <div id="verdict"></div>`;
+  document.getElementById('btnReal').onclick=()=>judge(false);
+  document.getElementById('btnFake').onclick=()=>judge(true);
+  nextBtn.style.display='none';
+  clearInterval(timerIv);
+  timerIv=setInterval(()=>{
+    timeLeft-=1.2;
+    document.querySelector('#timer div').style.width=Math.max(0,timeLeft)+'%';
+    if(timeLeft<=0){ clearInterval(timerIv); judge(null); }
+  },100);
+}
+function judge(saidFake){
+  if(judged!==null) return;
+  judged=saidFake; clearInterval(timerIv);
+  const p=POSTS[idx];
+  const reasons=document.getElementById('reasons');
+  if(saidFake===null){ verdict(false,'⏰ 時間切れ！ 情報の精査にはスピードも必要。'); return; }
+  // 判定の正誤に関わらず根拠を選ばせる（メタ認知の検証ポイント）
+  reasons.style.display='block';
+  const shuffled=[...p.reasons].sort(()=>Math.random()-.5);
+  for(const r of shuffled){
+    const b=document.createElement('button');
+    b.textContent=r.t;
+    b.onclick=()=>{
+      const judgeOK = (saidFake===p.fake);
+      const reasonOK = r.ok;
+      answered++;
+      if(judgeOK&&reasonOK){ score+=20; correct++; verdict(true,`◎ 判定も根拠も正解！ +20<br>${p.explain}`); }
+      else if(judgeOK){ score+=8; correct++; verdict(true,`○ 判定は正解、でも根拠が弱い… +8<br>${p.explain}`); }
+      else verdict(false,`✖ 判定ミス。<br>${p.explain}`);
+      reasons.style.display='none';
+      document.getElementById('score').textContent=
+        `スコア: ${score}　判定精度: ${Math.round(correct/answered*100)}%`;
+    };
+    reasons.appendChild(b);
+  }
+}
+function verdict(ok,html){
+  const v=document.getElementById('verdict');
+  v.className=ok?'ok':'ng'; v.style.display='block'; v.innerHTML=html;
+  card.style.animation='none';
+  nextBtn.style.display='inline-block';
+}
+nextBtn.onclick=()=>{
+  idx=(idx+1)%POSTS.length;
+  card.style.animation='';
+  void card.offsetWidth; // アニメ再発火
+  card.style.animation='slidein .5s';
+  show();
+};
+show();
+</script>
+</body>
+</html>

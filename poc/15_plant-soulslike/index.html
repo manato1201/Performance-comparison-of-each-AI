@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 植生ソウルライク VERDANT — ボクセル×ブルーム×派閥の検証</title>
+<style>
+  html,body { margin:0; height:100%; overflow:hidden; background:#04140c; font-family:"Yu Gothic UI",sans-serif; }
+  canvas { width:100vw !important; height:100vh !important; image-rendering:pixelated; display:block; }
+  #hud { position:fixed; top:10px; left:10px; color:#fff; text-shadow:0 1px 3px #000; z-index:10; }
+  #hud h1 { font-size:13px; margin:0 0 6px; color:#c2da75; }
+  #hud .row { font-size:12px; margin:2px 0; }
+  #stamina { width:180px; height:9px; background:rgba(0,0,0,.5); border-radius:5px; overflow:hidden;
+             border:1px solid rgba(194,218,117,.4); }
+  #stamina div { height:100%; width:100%; background:linear-gradient(90deg,#c2da75,#48a772); transition:width .1s; }
+  #factions { position:fixed; top:10px; right:10px; z-index:10; display:flex; flex-direction:column; gap:4px; }
+  #factions button { border:1px solid rgba(194,218,117,.5); padding:6px 14px; border-radius:14px; cursor:pointer;
+    font-size:12px; background:rgba(4,30,18,.7); color:#c2da75; backdrop-filter:blur(4px); }
+  #factions button.active { background:#c2da75; color:#00512e; box-shadow:0 0 14px rgba(194,218,117,.7); }
+  #msg { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); color:#e8f4d8;
+    background:rgba(0,40,24,.72); padding:8px 22px; border-radius:16px; font-size:13px; z-index:10;
+    border:1px solid rgba(194,218,117,.35); backdrop-filter:blur(6px); }
+  /* ---- Scene遷移オーバーレイ（Stateパターン: title → play → result） ---- */
+  .scene { position:fixed; inset:0; z-index:30; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; background:radial-gradient(ellipse at 50% 40%, rgba(1,54,34,.88), rgba(2,10,6,.97));
+    transition:opacity .7s, visibility .7s; }
+  .scene.hidden { opacity:0; visibility:hidden; }
+  .scene h1 { color:#fff; font-size:46px; margin:0; letter-spacing:.14em;
+    text-shadow:0 0 24px #c2da75, 0 0 60px #018573; }
+  .scene .sub { color:#c2da75; font-size:14px; margin:12px 0 26px; }
+  .scene .lines { color:#e8f4d8; font-size:14px; line-height:2; text-align:center; margin-bottom:22px; }
+  .scene button { padding:12px 44px; font-size:15px; border:1px solid #c2da75; border-radius:24px;
+    background:rgba(194,218,117,.12); color:#c2da75; cursor:pointer; backdrop-filter:blur(6px);
+    transition:all .25s; letter-spacing:.1em; }
+  .scene button:hover { background:#c2da75; color:#00512e; box-shadow:0 0 30px rgba(194,218,117,.8); }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud">
+  <h1>🌿 VERDANT — WASD移動 / Shiftダッシュ / Spaceジャンプ / E接触 / Pで解像度切替</h1>
+  <div class="row">スタミナ（移動では減らない）</div>
+  <div id="stamina"><div></div></div>
+  <div class="row" id="mat">素材: 0 / 12　好感度: 0</div>
+</div>
+<div id="factions"></div>
+<div id="msg">高い場所ほど良い素材。ツタ足場（明るい緑）はジャンプ台</div>
+
+<div class="scene" id="title">
+  <h1>VERDANT</h1>
+  <div class="sub">植生ソウルライク PoC — 戦う・飼う・組む・奪う・奪われる</div>
+  <div class="lines">ボクセル造形＋ブルーム発光＋低解像度ピクセルレンダリングの検証<br>素材を12個集めると検証完了</div>
+  <button id="startBtn">▶ 探索を始める</button>
+</div>
+<div class="scene hidden" id="result">
+  <h1 id="resTitle">検証完了</h1>
+  <div class="lines" id="resLines"></div>
+  <button onclick="location.reload()">↻ もう一度</button>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x06231a);
+scene.fog = new THREE.FogExp2(0x06231a, .022);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, .1, 220);
+const renderer = new THREE.WebGLRenderer({ antialias:false });
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// ---- ポストプロセス（UnrealBloom＝参考動画のネオングロー） ----
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .95, .55, .58);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// 低解像度レンダリング（ボクセル/ピクセル風の質感。Pでトグル）
+let pixelated = true;
+function applySize(){
+  const s = pixelated ? .42 : 1;
+  renderer.setSize(innerWidth*s, innerHeight*s, false);
+  composer.setSize(innerWidth*s, innerHeight*s);
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+}
+applySize();
+addEventListener('resize', applySize);
+
+scene.add(new THREE.HemisphereLight(0xc2da75, 0x00220f, .9));
+const sun = new THREE.DirectionalLight(0xfff2d0, 1.2);
+sun.position.set(24, 42, 12); sun.castShadow = true;
+sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60; sun.shadow.camera.bottom = -60;
+scene.add(sun);
+
+// ---- 地形（ボクセルプレート群） ----
+const platforms = [];
+const platMat = new THREE.MeshStandardMaterial({ color:0x14503a, roughness:.95 });
+const platTopMat = new THREE.MeshStandardMaterial({ color:0x2e7d4f, roughness:.9 });
+function addPlatform(x, y, z, w, h, d, bouncy=false){
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), platMat);
+  body.position.y = -h/2; body.receiveShadow = body.castShadow = true;
+  const top = new THREE.Mesh(new THREE.BoxGeometry(w, .3, d),
+    bouncy ? new THREE.MeshStandardMaterial({ color:0xc2da75, emissive:0x88b32d, emissiveIntensity:.9 }) : platTopMat);
+  top.position.y = -.15; top.receiveShadow = true;
+  g.add(body, top);
+  g.position.set(x, y, z);
+  scene.add(g);
+  platforms.push({ min:new THREE.Vector3(x-w/2, y-h, z-d/2), max:new THREE.Vector3(x+w/2, y, z+d/2), bouncy });
+}
+addPlatform(0, 0, 0, 90, 2, 90);
+addPlatform(8, 2.5, -6, 8, 2.5, 8);
+addPlatform(16, 5, -14, 7, 5, 7);
+addPlatform(24, 8, -22, 6, 8, 6);
+addPlatform(12, 11, -30, 6, 1, 6);
+addPlatform(-14, 3.5, 10, 10, 3.5, 6);
+addPlatform(-24, 7, 2, 6, 7, 6);
+addPlatform(-4, 1.2, 18, 5, 1.2, 5, true);
+addPlatform(-16, 1.2, -18, 5, 1.2, 5, true);
+
+// 背景モノリス（8co28風の黒柱＋窓明かり）
+for(let i=0;i<12;i++){
+  const h = 8+Math.random()*18;
+  const mono = new THREE.Mesh(new THREE.BoxGeometry(2+Math.random()*3, h, 2+Math.random()*3),
+    new THREE.MeshStandardMaterial({ color:0x0a1f18, roughness:1 }));
+  const a = Math.random()*Math.PI*2, r = 38+Math.random()*14;
+  mono.position.set(Math.cos(a)*r, h/2, Math.sin(a)*r);
+  mono.castShadow = true;
+  scene.add(mono);
+}
+
+// 花畑（発光花: 参考動画の橙花）
+const flowerGeo = new THREE.IcosahedronGeometry(.28, 0);
+const flowerMat = new THREE.MeshStandardMaterial({ color:0xf4762c, emissive:0xf4762c, emissiveIntensity:1.4, roughness:.5 });
+const stemMat = new THREE.MeshStandardMaterial({ color:0x1d5a7a, roughness:.9 });
+for(let i=0;i<80;i++){
+  const x=(Math.random()-.5)*80, z=(Math.random()-.5)*80;
+  if(Math.hypot(x,z)<6) continue;
+  const stem = new THREE.Mesh(new THREE.BoxGeometry(.08,.8,.08), stemMat);
+  stem.position.set(x,.4,z);
+  const head = new THREE.Mesh(flowerGeo, flowerMat);
+  head.position.set(x,.95,z);
+  head.rotation.set(Math.random(),Math.random(),0);
+  scene.add(stem, head);
+}
+
+// ---- 植物（ボクセル樹＋発光蕾。敵対で赤へ） ----
+const plants = [];
+const trunkMat = new THREE.MeshStandardMaterial({ color:0x24513a, roughness:.95 });
+const leafMats = [0x80b94e,0x48a772,0x5fae62].map(c=>new THREE.MeshStandardMaterial({ color:c, roughness:.85 }));
+function addPlant(x, z, groundY){
+  const g = new THREE.Group();
+  // 幹（ずれながら積むボクセル）
+  for(let i=0;i<4;i++){
+    const b = new THREE.Mesh(new THREE.BoxGeometry(.55,.8,.55), trunkMat);
+    b.position.set(Math.sin(i*1.3)*.18, .4+i*.75, Math.cos(i*.8)*.14);
+    b.castShadow = true; g.add(b);
+  }
+  // 葉クラスタ（不規則ボクセル群）
+  for(let i=0;i<8;i++){
+    const s=.5+Math.random()*.55;
+    const b=new THREE.Mesh(new THREE.BoxGeometry(s,s,s), leafMats[i%3]);
+    b.position.set((Math.random()-.5)*1.7, 2.6+Math.random()*1.2, (Math.random()-.5)*1.7);
+    b.rotation.y=Math.random(); b.castShadow=true; g.add(b);
+  }
+  // 蕾（発光イコサヘドロン＝ブルームの光源）
+  const budMat = new THREE.MeshStandardMaterial({ color:0xe9a3c0, emissive:0xe9a3c0, emissiveIntensity:1.7, roughness:.4 });
+  const bud = new THREE.Mesh(new THREE.IcosahedronGeometry(.5,0), budMat);
+  bud.position.y = 4.1; bud.castShadow = true;
+  g.add(bud);
+  g.position.set(x, groundY, z);
+  scene.add(g);
+  plants.push({ g, bud, budMat, hp:3, hostile:false, t:Math.random()*10 });
+}
+addPlant(6,4,0); addPlant(-8,-8,0); addPlant(14,8,0); addPlant(-20,16,0);
+addPlant(16,-14,5); addPlant(24,-22,8); addPlant(12,-30,11); addPlant(-24,2,7);
+addPlant(-14,10,3.5); addPlant(20,18,0); addPlant(-30,-12,0); addPlant(2,-20,0);
+
+// ---- プレイヤー（ボクセルアヒル騎士） ----
+const player = new THREE.Group();
+const bodyMat = new THREE.MeshStandardMaterial({ color:0xf1d5cd, roughness:.7 });
+function box(w,h,d,mat,x,y,z){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); m.position.set(x,y,z); m.castShadow=true; player.add(m); return m; }
+box(1.1,1.0,.9,bodyMat,0,.8,0);                          // 胴
+box(.7,.65,.65,bodyMat,0,1.65,-.15);                     // 頭
+box(.5,.18,.34,new THREE.MeshStandardMaterial({color:0xe07b24}),0,1.6,-.62); // くちばし
+box(.16,.16,.16,new THREE.MeshStandardMaterial({color:0x092038}), .2,1.78,-.44); // 目R
+box(.16,.16,.16,new THREE.MeshStandardMaterial({color:0x092038}),-.2,1.78,-.44); // 目L
+box(.25,.6,.7,bodyMat,.68,.8,0); box(.25,.6,.7,bodyMat,-.68,.8,0);  // 翼
+box(.4,.3,.5,bodyMat,0,.75,.65);                          // 尾
+box(.22,.35,.22,new THREE.MeshStandardMaterial({color:0xe07b24}), .25,.18,0); // 脚
+box(.22,.35,.22,new THREE.MeshStandardMaterial({color:0xe07b24}),-.25,.18,0);
+player.position.set(0, 0, 8);
+scene.add(player);
+
+// ---- 火の粉（Points・ブルームで光る） ----
+const emberCount = 260;
+const emberGeo = new THREE.BufferGeometry();
+const emberPos = new Float32Array(emberCount*3);
+for(let i=0;i<emberCount;i++){
+  emberPos[i*3]=(Math.random()-.5)*90; emberPos[i*3+1]=Math.random()*26; emberPos[i*3+2]=(Math.random()-.5)*90;
+}
+emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos,3));
+const embers = new THREE.Points(emberGeo, new THREE.PointsMaterial({
+  color:0xffb347, size:.32, transparent:true, opacity:.85, sizeAttenuation:true }));
+scene.add(embers);
+
+// ---- 派閥（State） ----
+const FACTIONS = {
+  '自生': { color:0xf1d5cd, note:'補助なし。純粋な己の力' },
+  '群生': { color:0xc2da75, note:'供の植物が追従（餌が必要）' },
+  '共生': { color:0x67c1af, note:'好感度の分だけ植物の力を借りる' },
+  '支配': { color:0xb33033, note:'強奪した力。油断すると侵食される' },
+  '寄生': { color:0x9d82ba, note:'素材収入半減、攻撃は一撃必殺' },
+};
+let faction = '自生';
+const followers = [];
+const facDiv = document.getElementById('factions');
+for (const name of Object.keys(FACTIONS)) {
+  const b = document.createElement('button');
+  b.textContent = name; if (name === faction) b.classList.add('active');
+  b.onclick = () => {
+    faction = name;
+    [...facDiv.children].forEach(c => c.classList.toggle('active', c.textContent === name));
+    bodyMat.color.setHex(FACTIONS[name].color);
+    msg(`派閥: ${name} — ${FACTIONS[name].note}`);
+    followers.forEach(f => scene.remove(f)); followers.length = 0;
+    if (name === '群生') for (let i = 0; i < 3; i++) {
+      const f = new THREE.Mesh(new THREE.OctahedronGeometry(.4,0),
+        new THREE.MeshStandardMaterial({ color:0x80b94e, emissive:0x4a8a2a, emissiveIntensity:1.1 }));
+      f.castShadow = true; scene.add(f); followers.push(f);
+    }
+  };
+  facDiv.appendChild(b);
+}
+
+// ---- 入力・状態 ----
+let playing = false;
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('title').classList.add('hidden');
+  playing = true;
+};
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyE' && playing) interact();
+  if (e.code === 'KeyP'){ pixelated = !pixelated; applySize(); }
+});
+addEventListener('keyup', e => keys[e.code] = false);
+
+let vel = new THREE.Vector3(), grounded = false;
+let stamina = 100, materials = 0, affinity = 0, ended = false;
+const GOAL = 12;
+const matDiv = document.getElementById('mat');
+const stBar = document.querySelector('#stamina div');
+const msgDiv = document.getElementById('msg');
+let msgTimer;
+function msg(t){ msgDiv.textContent = t; clearTimeout(msgTimer); msgTimer = setTimeout(()=>msgDiv.textContent='', 4000); }
+function finish(){
+  if(ended) return; ended = true; playing = false;
+  document.getElementById('resLines').innerHTML =
+    `素材 ${materials} 個を収集（高度ボーナス込み）<br>派閥: ${faction} ／ 好感度: ${affinity}<br>` +
+    `敵対進化した株: ${plants.filter(p=>p.hostile).length} — 攻撃はいつも見られている`;
+  document.getElementById('result').classList.remove('hidden');
+}
+
+const dashTrail = [];
+function interact(){
+  for (const p of plants) {
+    if (p.hp <= 0) continue;
+    if (player.position.distanceTo(p.g.position) < 3.4) {
+      if (faction === '共生') {
+        affinity++;
+        p.budMat.color.setHex(0x67c1af); p.budMat.emissive.setHex(0x67c1af);
+        msg('植物と対話した… 好感度+1（力の上限が上がる）');
+      } else {
+        if (stamina < 20) { msg('スタミナ不足！'); return; }
+        stamina -= 20;
+        p.hp -= (faction === '寄生') ? 3 : 1;
+        p.g.rotation.z = .3; setTimeout(()=>p.g.rotation.z=0, 120);
+        const gain = (faction === '寄生' ? 1 : 2) + Math.round(p.g.position.y / 4);
+        if (p.hp <= 0) {
+          materials += gain;
+          p.g.visible = false;
+          msg(`素材+${gain}（高度ボーナス込み）`);
+          if (materials >= GOAL) setTimeout(finish, 600);
+        } else {
+          p.hostile = true;
+          p.budMat.color.setHex(0xff5040); p.budMat.emissive.setHex(0xff3020); p.budMat.emissiveIntensity = 2.2;
+          msg('植物が敵対進化した！（攻撃を学習される）');
+        }
+      }
+      matDiv.textContent = `素材: ${materials} / ${GOAL}　好感度: ${affinity}`;
+      return;
+    }
+  }
+}
+
+const clock = new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), .05);
+  const now = performance.now();
+
+  if (playing && !ended) {
+    const dash = keys['ShiftLeft'] || keys['ShiftRight'];
+    const speed = dash ? 16 : 8;
+    const dir = new THREE.Vector3(
+      (keys['KeyD']?1:0)-(keys['KeyA']?1:0), 0,
+      (keys['KeyS']?1:0)-(keys['KeyW']?1:0));
+    if (dir.lengthSq() > 0) {
+      dir.normalize();
+      player.position.x += dir.x*speed*dt;
+      player.position.z += dir.z*speed*dt;
+      player.rotation.y = Math.atan2(dir.x, dir.z) + Math.PI;
+      // 歩行バウンス
+      player.children[0].position.y = .8 + Math.abs(Math.sin(now/90))*.1;
+    }
+    camera.fov += ((dash && dir.lengthSq()>0 ? 84 : 70) - camera.fov)*.12;
+    camera.updateProjectionMatrix();
+    // ダッシュ残像（発光オクタ）
+    if (dash && dir.lengthSq() > 0) {
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(.3,0),
+        new THREE.MeshBasicMaterial({ color:0xc2da75, transparent:true, opacity:.8 }));
+      m.position.copy(player.position).add(new THREE.Vector3((Math.random()-.5)*.6, 1, (Math.random()-.5)*.6));
+      scene.add(m); dashTrail.push(m);
+    }
+    // 重力・着地
+    vel.y -= 30*dt;
+    if (grounded && keys['Space']) { vel.y = 13; grounded = false; }
+    player.position.y += vel.y*dt;
+    grounded = false;
+    for (const pf of platforms) {
+      const p = player.position;
+      if (p.x>pf.min.x && p.x<pf.max.x && p.z>pf.min.z && p.z<pf.max.z) {
+        if (p.y<=pf.max.y && p.y>pf.max.y-1.4 && vel.y<=0) {
+          p.y = pf.max.y;
+          vel.y = pf.bouncy ? 22 : 0;
+          grounded = !pf.bouncy;
+          if (pf.bouncy) msg('ツタ足場！ 高所へ');
+        }
+      }
+    }
+    if (player.position.y < -20) { player.position.set(0,2,8); vel.set(0,0,0); msg('落下… 拠点に戻された'); }
+    stamina = Math.min(100, stamina + 18*dt);
+    stBar.style.width = stamina + '%';
+    // 敵対個体の追尾
+    for (const p of plants) {
+      if (!p.g.visible) continue;
+      p.t += dt;
+      p.g.rotation.y = Math.sin(p.t)*.14;
+      p.bud.rotation.y += dt*1.2;
+      p.bud.position.y = 4.1 + Math.sin(p.t*2.1)*.18;
+      if (p.hostile) {
+        const d = new THREE.Vector3().subVectors(player.position, p.g.position); d.y = 0;
+        if (d.length() < 13) p.g.position.addScaledVector(d.normalize(), 1.6*dt);
+      }
+    }
+    followers.forEach((f,i)=>{
+      const a = now/600 + i*2.1;
+      f.position.set(player.position.x+Math.cos(a)*1.7, player.position.y+.6+Math.sin(a*2)*.15, player.position.z+Math.sin(a)*1.7);
+      f.rotation.y += dt*2;
+    });
+  }
+  // ダッシュ残像フェード
+  for (let i=dashTrail.length-1; i>=0; i--) {
+    const m = dashTrail[i];
+    m.material.opacity -= 1.6*dt; m.position.y += .8*dt; m.rotation.y += 4*dt;
+    if (m.material.opacity <= 0) { scene.remove(m); dashTrail.splice(i,1); }
+  }
+  // 火の粉ドリフト
+  const pos = emberGeo.attributes.position.array;
+  for(let i=0;i<emberCount;i++){
+    pos[i*3+1] += dt*(.4+((i*7)%10)*.05);
+    pos[i*3]   += Math.sin(now/1400+i)*.004;
+    if(pos[i*3+1] > 26) pos[i*3+1] = 0;
+  }
+  emberGeo.attributes.position.needsUpdate = true;
+  // カメラ
+  const camTarget = new THREE.Vector3(player.position.x, player.position.y+6, player.position.z+11);
+  camera.position.lerp(camTarget, .08);
+  camera.lookAt(player.position.x, player.position.y+1.5, player.position.z);
+
+  composer.render();
+}
+tick();
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 走れスライムくん — 三態変化×メタボール表現の検証</title>
+<style>
+  body { margin:0; background:#0e5578; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#fad7d2; }
+  #info { font-size:12px; color:#9aced8; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#fad7d2; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>💧 走れスライムくん PoC — ←→移動 / 1:液体 2:固体 3:気体 で三態変化してお茶会へ</h1>
+<div id="info">検証: 2Dメタボール（ぷるぷる融合）・形態別の物理と通行判定・体積＝サイズ表現</div>
+<div id="stage"></div>
+<div id="hud">形態: <b id="form">液体</b>　体積: <b id="vol">100</b>　残り時間: <b id="time">60</b>秒
+<span id="goalmsg"></span></div>
+<script>
+const W=880,H=400;
+const app=new PIXI.Application({width:W,height:H,background:0xbad4d7,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'走れスライムくん', sub:'三態変化アクション — ←→移動 / 1液体 2固体 3気体（Pでピクセル化）',
+  accent:0x5db3c9, accent2:0xfad7d2, bloomThreshold:.72, crt:.7 });
+
+// ---- 背景（泡沫パレット） ----
+const bg=new PIXI.Graphics();
+bg.beginFill(0xfff4d1).drawRect(0,0,W,120).endFill();
+bg.beginFill(0xbad4d7).drawRect(0,120,W,H).endFill();
+app.stage.addChild(bg);
+
+// ---- コース: 地面・障害 ----
+const GROUND=340;
+const ground=new PIXI.Graphics();
+ground.beginFill(0x1572a3).drawRect(0,GROUND,W,H-GROUND).endFill();
+ground.beginFill(0x5db3c9).drawRect(0,GROUND,W,8).endFill();
+app.stage.addChild(ground);
+// 花畑（参考動画の花フィールド風・ベジェ花弁）
+const flowers=new PIXI.Graphics();
+for(let i=0;i<9;i++){
+  const fx=50+((i*97)%(W-140)), fy=GROUND-2;
+  flowers.lineStyle(2,0x3f7d8c).moveTo(fx,fy).quadraticCurveTo(fx+3,fy-8,fx+1,fy-14);
+  flowers.lineStyle(0);
+  FXS.leaf(flowers,0x4f9aa0,9,3.5,.4,fx,fy-6);
+  FXS.flower(flowers,[0xf4a26b,0xe86a52,0xf6bfbb][i%3],0xfff4d1,7+(i%3)*2,6,i*53+7,fx+1,fy-17);
+}
+app.stage.addChild(flowers);
+// 障害1: 低いゲート（液体のみ通過） 障害2: 木箱（固体で破壊） 障害3: 壁（気体で越える）
+const obstacles=[
+  {type:'gate', x:260, w:60, gapY:GROUND-26, label:'狭い隙間\n(液体)'},
+  {type:'crate', x:470, w:56, hp:2, label:'木箱\n(固体で体当たり)'},
+  {type:'wall', x:660, w:26, h:150, label:'高い壁\n(気体で上昇)'},
+];
+const obsG=new PIXI.Graphics(); app.stage.addChild(obsG);
+function drawObstacles(){
+  obsG.clear();
+  for(const o of obstacles){
+    if(o.dead) continue;
+    if(o.type==='gate'){
+      obsG.beginFill(0x0e5578).drawRect(o.x,120,o.w,o.gapY-120-0).endFill();
+    } else if(o.type==='crate'){
+      obsG.beginFill(0xc9a06c).drawRoundedRect(o.x,GROUND-o.w,o.w,o.w,6).endFill();
+      obsG.lineStyle(3,0x885f3e).moveTo(o.x,GROUND-o.w).lineTo(o.x+o.w,GROUND)
+        .moveTo(o.x+o.w,GROUND-o.w).lineTo(o.x,GROUND); obsG.lineStyle(0);
+    } else if(o.type==='wall'){
+      obsG.beginFill(0x0e5578).drawRect(o.x,GROUND-o.h,o.w,o.h).endFill();
+    }
+  }
+}
+drawObstacles();
+// ラベル
+for(const o of obstacles){
+  const t=new PIXI.Text(o.label,{fontSize:11,fill:0x0e5578,align:'center'});
+  t.anchor.set(.5,1); t.position.set(o.x+o.w/2,118); app.stage.addChild(t);
+}
+// ゴール: お茶会
+const goal=new PIXI.Container();
+const gt=new PIXI.Graphics();
+// テーブル（スカラップ裾のクロス）
+gt.beginFill(0xfad7d2).drawRoundedRect(-44,-12,88,10,4).endFill();
+for(let i=0;i<8;i++) gt.beginFill(0xfad7d2).drawCircle(-38+i*11,-2,6).endFill();
+gt.beginFill(0xf1d5cd).drawRect(-34,4,6,24).drawRect(28,4,6,24).endFill();  // 脚
+// ソーサー＋ティーカップ（ベジェ＋取っ手）
+gt.beginFill(0xffffff).drawEllipse(0,-12,18,3.5).endFill();
+gt.beginFill(0xffffff);
+gt.moveTo(-13,-28); gt.bezierCurveTo(-11,-14,11,-14,13,-28); gt.lineTo(-13,-28); gt.closePath().endFill();
+gt.lineStyle(2.5,0xffffff).moveTo(13,-26).quadraticCurveTo(21,-22,13,-17); gt.lineStyle(0);
+gt.beginFill(0xe9a3c0,.5).drawEllipse(0,-28,12,3).endFill();   // 空のカップ内（水待ち）
+// 花模様
+gt.beginFill(0xe9a3c0).drawCircle(-5,-21,1.6).endFill();
+FXS.flower(gt,0xe9a3c0,0xfff4d1,4,5,11,5,-22);
+// 湯気カール（お湯は沸いてる）
+gt.lineStyle(1.5,0xffffff,.55);
+gt.moveTo(-4,-34).bezierCurveTo(-8,-40,0,-42,-3,-48);
+gt.moveTo(5,-32).bezierCurveTo(1,-38,9,-40,6,-46);
+gt.lineStyle(0);
+goal.addChild(gt);
+const gl=new PIXI.Text('アケミちゃんのお茶会',{fontSize:11,fill:0x0e5578});
+gl.anchor.set(.5); gl.position.set(0,-34); goal.addChild(gl);
+goal.position.set(W-70,GROUND); app.stage.addChild(goal);
+
+// ---- スライム: メタボール（blur+threshold フィルタ） ----
+const blobLayer=new PIXI.Container();
+app.stage.addChild(blobLayer);
+const thresholdFrag=`
+varying vec2 vTextureCoord;
+uniform sampler2D uSampler;
+void main(void){
+  vec4 c = texture2D(uSampler, vTextureCoord);
+  float a = smoothstep(0.5, 0.62, c.a);
+  gl_FragColor = vec4(c.rgb/max(c.a,0.001), 1.0) * a;
+}`;
+blobLayer.filters=[new PIXI.BlurFilter(8,4), new PIXI.Filter(undefined, thresholdFrag)];
+blobLayer.filterArea=new PIXI.Rectangle(0,0,W,H);
+
+const N=9, blobs=[];
+for(let i=0;i<N;i++){
+  const g=new PIXI.Graphics();
+  g.beginFill(0x5db3c9,.95).drawCircle(0,0,13).endFill();
+  blobLayer.addChild(g);
+  blobs.push({g,x:70+Math.random()*20,y:GROUND-20+Math.random()*10,vx:0,vy:0});
+}
+// 目（フィルタ外レイヤー）
+const eyes=new PIXI.Graphics();
+eyes.beginFill(0x0e5578).drawCircle(-6,0,3).drawCircle(6,0,3).endFill();
+app.stage.addChild(eyes);
+
+let form='liquid', volume=100, time=60, done=false, shake=0;
+const FORM={liquid:{label:'液体',color:0x5db3c9,speed:3.2,r:13,spread:26},
+            solid:{label:'固体',color:0x1572a3,speed:2.2,r:11,spread:8},
+            gas:{label:'気体',color:0x9aced8,speed:2.6,r:15,spread:40}};
+const keys={};
+addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Digit1') setForm('liquid');
+  if(e.code==='Digit2') setForm('solid');
+  if(e.code==='Digit3') setForm('gas');
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+function setForm(f){
+  form=f;
+  document.getElementById('form').textContent=FORM[f].label;
+  for(const b of blobs){
+    b.g.clear();
+    b.g.beginFill(FORM[f].color,.95).drawCircle(0,0,FORM[f].r*(volume/100)).endFill();
+    b.vx+=(Math.random()-.5)*4; b.vy-=Math.random()*3; // 変身の弾け
+  }
+  shake=3;
+}
+
+// パーティクル
+const parts=[];
+function burst(x,y,color,n=12,spd=4){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*3).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,life:1});
+    app.stage.addChild(g);
+  }
+}
+
+setInterval(()=>{ if(!done && time>0 && FX.playing){ time--; document.getElementById('time').textContent=time;
+  if(time===0){
+    document.getElementById('goalmsg').textContent='⏰ お茶会に間に合わなかった…';
+    FX.result({ title:'TIME UP…', lines:['お茶会に間に合わなかった','形態の使い分けで短縮しよう'] });
+  } }},1000);
+
+app.ticker.add(dt=>{
+  if(!FX.playing||done||time<=0) return;
+  const F=FORM[form];
+  const dir=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);
+  // 中心
+  let cx=0,cy=0;
+  for(const b of blobs){cx+=b.x;cy+=b.y;} cx/=N; cy/=N;
+
+  for(const b of blobs){
+    // 形態別の目標挙動
+    b.vx += dir*F.speed*.14*dt;
+    if(form==='gas'){ b.vy -= .16*dt; b.vy += (110-b.y)*.0016*dt; }  // 浮遊: 上空バンドへ
+    else b.vy += .5*dt;                                              // 重力
+    // 凝集（ばね）: 形態でまとまり方が変わる
+    const k = form==='solid' ? .05 : .014;
+    b.vx += (cx-b.x)*k*dt + (Math.random()-.5)*(form==='liquid'?.5:.15)*dt;
+    b.vy += (cy-b.y)*k*dt;
+    // 広がり反発
+    for(const o of blobs){ if(o===b) continue;
+      const dx=b.x-o.x, dy=b.y-o.y, d=Math.hypot(dx,dy)||1;
+      if(d<F.spread){ b.vx+=dx/d*.25*dt; b.vy+=dy/d*.25*dt; }
+    }
+    b.vx*=Math.pow(.92,dt); b.vy*=Math.pow(form==='gas'?.94:.96,dt);
+    b.x+=b.vx*dt; b.y+=b.vy*dt;
+    // 地面
+    if(form!=='gas' && b.y>GROUND-6){ b.y=GROUND-6; b.vy=Math.min(0,b.vy); }
+    if(b.y>GROUND-4) { b.y=GROUND-4; b.vy=Math.min(0,b.vy); }
+    if(b.x<14) b.x=14;
+    // 障害判定
+    for(const ob of obstacles){
+      if(ob.dead) continue;
+      if(ob.type==='gate'){
+        // 上部ブロック: 液体は下の隙間を通れる、他は塞がれる
+        if(b.x>ob.x-8 && b.x<ob.x+ob.w+8 && b.y<ob.gapY && form!=='liquid' && b.y<GROUND-2) b.x=Math.min(b.x,ob.x-8);
+        if(b.x>ob.x-8 && b.x<ob.x+ob.w+8 && form!=='liquid' && b.y>120) b.x=ob.x-8;
+      } else if(ob.type==='crate'){
+        if(b.x>ob.x-10 && b.x<ob.x+ob.w+10 && b.y>GROUND-ob.w-10){
+          if(form==='solid' && Math.abs(b.vx)>1.2){
+            ob.hp--; shake=6; burst(ob.x+ob.w/2,GROUND-ob.w/2,0xc9a06c,16,5);
+            if(ob.hp<=0){ ob.dead=true; drawObstacles(); burst(ob.x+ob.w/2,GROUND-ob.w/2,0x885f3e,24,7); }
+            b.vx=-2;
+          } else b.x=ob.x-10;
+        }
+      } else if(ob.type==='wall'){
+        if(b.x>ob.x-10 && b.x<ob.x+ob.w+10 && b.y>GROUND-ob.h-6) {
+          if(form!=='gas') b.x=ob.x-10;
+          else if(b.y>GROUND-ob.h-6 && b.y<GROUND) b.x=ob.x-10; // 気体でも壁自体は抜けない→上を越える
+        }
+      }
+    }
+    b.g.position.set(b.x,b.y);
+  }
+  // 目
+  eyes.position.set(cx+dir*4, cy-4);
+  eyes.scale.y = 1+Math.sin(performance.now()/160)*.12;
+  // ゴール
+  if(cx>W-100 && !done){
+    done=true;
+    document.getElementById('goalmsg').textContent='🫖 間に合った！';
+    for(let i=0;i<40;i++) burst(W-70,GROUND-30,[0xfad7d2,0xfff4d1,0x9aced8][i%3],1,6);
+    FX.result({ title:'🫖 CLEAR!', lines:[`残り${time}秒でお届け`,'アケミちゃんのお茶会に間に合った！'] });
+  }
+  // パーティクル
+  for(const p of parts){
+    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.12*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

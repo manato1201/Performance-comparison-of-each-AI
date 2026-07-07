@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: おはだけCarChase — マウス追尾チェイスの検証</title>
+<style>
+  body { margin:0; background:#3a2f4b; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#fdd000; }
+  #info { font-size:12px; color:#9fd9f6; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); cursor:none; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#fdd000; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🚓 おはだけCarChase PoC（逮捕編） — マウスだけで運転。パトカーから逃げて50000点！</h1>
+<div id="info">検証: ポインタ追尾AI・ドリフト軌跡・燃料管理・「逮捕→脱獄編へ」の連環</div>
+<div id="stage"></div>
+<div id="hud">スコア: <b id="score">0</b>　燃料: <b id="fuel">100</b>　<span id="msg"></span></div>
+<script>
+const W=880,H=460;
+const app=new PIXI.Application({width:W,height:H,background:0x2b2b3a,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'おはだけ CarChase', sub:'逮捕編 — マウスだけで運転。パトカーから逃げ切れ（Pでピクセル化）',
+  accent:0xfdd000, accent2:0xe35b74, bloomThreshold:.55 });
+
+// 道路レーン（スクロール）
+const road=new PIXI.Graphics(); app.stage.addChild(road);
+let roadY=0;
+function drawRoad(){
+  road.clear();
+  road.beginFill(0x3d3d50).drawRect(0,0,W,H).endFill();
+  for(let i=-1;i<12;i++){
+    const y=(i*90+roadY%90);
+    road.beginFill(0xfdd000,.5).drawRect(W/2-4,y,8,42).endFill();
+    road.beginFill(0xffffff,.15).drawRect(W*.22-3,y,6,42).drawRect(W*.78-3,y,6,42).endFill();
+  }
+}
+
+// ドリフト軌跡
+const trailG=new PIXI.Graphics(); app.stage.addChild(trailG);
+const trail=[];
+
+function makeCar(color,light=false){
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics();
+  // タイヤ4輪
+  g.beginFill(0x14141c).drawRoundedRect(-18,-20,6,12,3).drawRoundedRect(12,-20,6,12,3)
+    .drawRoundedRect(-18,10,6,12,3).drawRoundedRect(12,10,6,12,3).endFill();
+  // ボディ（流線形ベジェ）
+  g.beginFill(color);
+  g.moveTo(0,-30); g.bezierCurveTo(13,-30,16,-16,15,2);
+  g.bezierCurveTo(15,18,12,28,0,28);
+  g.bezierCurveTo(-12,28,-15,18,-15,2);
+  g.bezierCurveTo(-16,-16,-13,-30,0,-30); g.closePath().endFill();
+  // ボディシェード（左側面影）
+  g.beginFill(0x000000,.15);
+  g.moveTo(-15,2); g.bezierCurveTo(-15,18,-12,28,0,28);
+  g.bezierCurveTo(-8,26,-11,16,-11,2); g.closePath().endFill();
+  // フロント/リアガラス（キャビン）
+  g.beginFill(0x1c2740,.95);
+  g.moveTo(0,-13); g.bezierCurveTo(10,-13,10,-7,9,1);
+  g.bezierCurveTo(8,9,6,12,0,12);
+  g.bezierCurveTo(-6,12,-8,9,-9,1);
+  g.bezierCurveTo(-10,-7,-10,-13,0,-13); g.closePath().endFill();
+  g.beginFill(0xffffff,.3).drawEllipse(-4,-6,2.6,5).endFill();  // ガラス反射
+  // ヘッドライト・テールランプ・ミラー
+  g.beginFill(0xfff3b8,.95).drawEllipse(-8,-28,3.5,2).drawEllipse(8,-28,3.5,2).endFill();
+  g.beginFill(0xe35b74,.95).drawRoundedRect(-11,25,7,3,1.5).drawRoundedRect(4,25,7,3,1.5).endFill();
+  g.beginFill(color).drawRoundedRect(-19,-12,4,5,2).drawRoundedRect(15,-12,4,5,2).endFill();
+  // ボンネットのライン
+  g.lineStyle(1,0xffffff,.25).moveTo(-8,-26).quadraticCurveTo(0,-24,8,-26); g.lineStyle(0);
+  c.addChild(g);
+  if(light){
+    const l=new PIXI.Graphics(); c.addChild(l); c.light=l;
+  }
+  app.stage.addChild(c);
+  return c;
+}
+// プレイヤー & パトカー
+const player=makeCar(0xf19db5);
+const cops=[makeCar(0x8ab4f8,true)];
+const P={x:W/2,y:H*.7,vx:0,vy:0};
+const copsData=[{x:W/2,y:H+80,vx:0,vy:0}];
+// 障害車
+const traffic=[];
+function spawnTraffic(){
+  const c=makeCar([0x89c997,0x9d82ba,0xe6844a][Math.floor(Math.random()*3)]);
+  const lane=[W*.3,W*.5,W*.7][Math.floor(Math.random()*3)];
+  traffic.push({c,x:lane+(Math.random()-.5)*40,y:-60,vy:2.2+Math.random()});
+}
+setInterval(()=>{ if(FX.playing) spawnTraffic(); },1300);
+// 燃料缶
+const cans=[];
+function spawnCan(){
+  const g=new PIXI.Graphics();
+  g.beginFill(0xfdd000).drawRoundedRect(-8,-10,16,20,4).endFill();
+  g.beginFill(0xe35b74).drawRect(-8,-4,16,5).endFill();
+  g.position.set(80+Math.random()*(W-160),-30);
+  app.stage.addChild(g);
+  cans.push({g,vy:2.4});
+}
+setInterval(()=>{ if(FX.playing) spawnCan(); },4200);
+
+let mouse={x:W/2,y:H*.7};
+app.view.addEventListener('mousemove',e=>{
+  const r=app.view.getBoundingClientRect();
+  mouse.x=(e.clientX-r.left)*(W/r.width); mouse.y=(e.clientY-r.top)*(H/r.height);
+});
+let score=0,fuel=100,over=false,shake=0,t=0;
+const parts=[];
+function burst(x,y,color,n=16,spd=5){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*4).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1});
+    app.stage.addChild(g);
+  }
+}
+function gameOver(reason){
+  over=true; shake=16;
+  burst(P.x,P.y,0xe35b74,40,8); burst(P.x,P.y,0xfdd000,30,6);
+  player.visible=false;
+  document.getElementById('msg').innerHTML=`💥 ${reason} — <b>逮捕された！</b>`;
+  setTimeout(()=>FX.result({ title:'逮捕された！', lines:[reason,`スコア: ${score}`,'▶ 脱獄編（RanAway）へ続く…'] }), 700);
+}
+app.ticker.add(dt=>{
+  if(!FX.playing&&!over) return;
+  if(over){ tickFX(dt); return; }
+  t+=dt;
+  roadY+=4.5*dt; drawRoad();
+  // プレイヤー: マウスをばね追尾（車らしい慣性）
+  P.vx+=(mouse.x-P.x)*.012*dt; P.vy+=(mouse.y-P.y)*.012*dt;
+  P.vx*=Math.pow(.9,dt); P.vy*=Math.pow(.9,dt);
+  P.x+=P.vx*dt; P.y+=P.vy*dt;
+  P.x=Math.max(30,Math.min(W-30,P.x)); P.y=Math.max(40,Math.min(H-40,P.y));
+  player.position.set(P.x,P.y);
+  player.rotation=P.vx*.04;
+  // ドリフト軌跡
+  if(Math.abs(P.vx)>1.5){
+    trail.push({x:P.x-10,y:P.y+22,life:1},{x:P.x+10,y:P.y+22,life:1});
+  }
+  trailG.clear();
+  for(const tp of trail){ tp.life-=.02*dt; trailG.beginFill(0x222233,tp.life*.5).drawCircle(tp.x,tp.y,3).endFill(); }
+  trail.splice(0,trail.length,...trail.filter(p=>p.life>0));
+  // パトカー: プレイヤー追尾＋前方回避
+  for(let i=0;i<copsData.length;i++){
+    const C=copsData[i], c=cops[i];
+    let ax=(P.x-C.x), ay=(P.y-C.y);
+    const d=Math.hypot(ax,ay)||1;
+    C.vx+=ax/d*.09*dt; C.vy+=ay/d*.09*dt;
+    // 障害車を避ける
+    for(const tr of traffic){
+      const ox=C.x-tr.x, oy=C.y-tr.y, od=Math.hypot(ox,oy);
+      if(od<70){ C.vx+=ox/od*.25*dt; C.vy+=oy/od*.1*dt; }
+    }
+    C.vx*=Math.pow(.93,dt); C.vy*=Math.pow(.93,dt);
+    C.x+=C.vx*dt; C.y+=C.vy*dt;
+    c.position.set(C.x,C.y); c.rotation=C.vx*.05;
+    // 赤青灯
+    c.light.clear();
+    c.light.beginFill(Math.floor(t/10)%2?0xe35b74:0x6db9f8,.9).drawRoundedRect(-10,-26,20,7,3).endFill();
+    c.light.beginFill(Math.floor(t/10)%2?0xe35b74:0x6db9f8,.18).drawCircle(0,-22,26).endFill();
+    if(Math.hypot(P.x-C.x,P.y-C.y)<34) return gameOver('パトカーに接触');
+  }
+  // 障害車
+  for(const tr of traffic){
+    tr.y+=tr.vy*dt; tr.c.position.set(tr.x,tr.y);
+    if(tr.y>H+70){ tr.dead=true; app.stage.removeChild(tr.c); }
+    if(Math.hypot(P.x-tr.x,P.y-tr.y)<34) return gameOver('一般車に衝突');
+  }
+  traffic.splice(0,traffic.length,...traffic.filter(x=>!x.dead));
+  // 燃料缶
+  for(const cn of cans){
+    cn.g.y+=cn.vy*dt; cn.g.rotation+=.05*dt;
+    if(cn.g.y>H+30){ cn.dead=true; app.stage.removeChild(cn.g); }
+    if(Math.hypot(P.x-cn.g.x,P.y-cn.g.y)<30){
+      cn.dead=true; app.stage.removeChild(cn.g);
+      fuel=Math.min(100,fuel+30); burst(cn.g.x,cn.g.y,0xfdd000,14,4);
+    }
+  }
+  cans.splice(0,cans.length,...cans.filter(x=>!x.dead));
+  // スコア・燃料
+  score+=Math.floor(1*dt*(1+Math.hypot(P.vx,P.vy)*.15));
+  fuel-=.045*dt;
+  document.getElementById('score').textContent=score;
+  document.getElementById('fuel').textContent=Math.max(0,Math.floor(fuel));
+  if(fuel<=0) return gameOver('燃料切れ');
+  if(score>=50000){ over=true; FX.result({ title:'🏁 CLEAR!', lines:['50000点達成 — 逃げ切った！'] }); }
+  tickFX(dt);
+});
+function tickFX(dt){
+  for(const p of parts){
+    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.025*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+}
+</script>
+</body>
+</html>

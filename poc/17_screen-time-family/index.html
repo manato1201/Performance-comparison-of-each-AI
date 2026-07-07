@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: スクリーンタイム — 選択×本音表示の検証</title>
+<style>
+  body { margin:0; font-family:"Yu Gothic UI",sans-serif; background:#e6f4fd;
+         display:flex; justify-content:center; min-height:100vh; }
+  #root { width:min(680px, 94vw); padding:20px 0 60px; }
+  .house { border-radius:16px; padding:20px 24px; background:#fff; box-shadow:0 4px 16px rgba(0,0,0,.08);
+           transition: filter 1s; }
+  h1 { font-size:18px; color:#8a5f74; margin:0 0 4px; }
+  .sub { font-size:12px; color:#888; margin-bottom:14px; }
+  .day { font-size:14px; font-weight:bold; color:#8a5f74; }
+  .scene { background:#ffefc8; border-radius:10px; padding:12px 16px; margin:10px 0; font-size:14px; line-height:1.7; }
+  .meters { display:flex; gap:14px; margin:12px 0; }
+  .meter { flex:1; }
+  .meter label { font-size:11px; color:#666; }
+  .bar { height:10px; background:#eee; border-radius:5px; overflow:hidden; }
+  .bar div { height:100%; border-radius:5px; transition:width .6s; }
+  button.choice { display:block; width:100%; text-align:left; margin:6px 0; padding:10px 14px;
+    border:2px solid #c5d8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:13px; }
+  button.choice:hover { background:#e6f4fd; }
+  button.choice b { color:#8a5f74; }
+  .honne { background:#f1d7e7; border-left:5px solid #e9a3c0; border-radius:8px;
+           padding:10px 14px; margin:12px 0; font-size:13px; animation:fadein 1.2s; }
+  @keyframes fadein { from { opacity:0; transform:translateY(6px);} to { opacity:1; } }
+  .next { padding:10px 26px; border:none; border-radius:20px; background:#8a5f74; color:#fff;
+          cursor:pointer; font-size:14px; margin-top:6px; }
+  .ending { font-size:14px; line-height:1.9; }
+  .ending h2 { color:#8a5f74; }
+</style>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.4/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+// 選択肢3系統: 強要 / 放任 / 工夫（飴と鞭） — 強要・放任は表メーターに効くが「本音の距離」が悪化する
+const EVENTS = [
+  { day:1, scene:"仕事から帰宅。夕飯ができたのに、弟はタブレットから顔を上げない。「ごはんだよ」と2回言ったが返事がない。",
+    choices:[
+      { t:"強要", label:"タブレットを取り上げて食卓に着かせる", fx:{rhythm:+15, trust:-10, honne:+2},
+        honne:"（…あと1回で勝てたのに。どうせ僕の“あと少し”なんて、どうでもいいんだ）" },
+      { t:"放任", label:"冷めてもいいから放っておく。困るのは本人", fx:{room:+10, rhythm:-10, honne:+2},
+        honne:"（怒られなかった…。でも、誰も僕がなにしてるか見てない）" },
+      { t:"工夫", label:"「そのステージ終わったらおいで。今日の唐揚げは逃げないから」と区切りを渡す", fx:{trust:+10, rhythm:+5, honne:-1},
+        honne:"（“終わったら”って言ってくれた。ちゃんと区切りまで待っててくれた）" } ] },
+  { day:2, scene:"朝、弟がなかなか起きない。昨夜遅くまで動画を見ていたらしい。今日は自分も出かける用事がある。",
+    choices:[
+      { t:"強要", label:"布団をはがして「夜スマホ禁止！」と宣言する", fx:{rhythm:+10, trust:-10, honne:+2},
+        honne:"（禁止って言われると、隠れてやる方法を考えちゃう）" },
+      { t:"放任", label:"遅刻すれば学ぶだろう。先に家を出る", fx:{room:+10, rhythm:-15, honne:+1},
+        honne:"（また誰もいない朝。まあいいや、動画見よ）" },
+      { t:"工夫", label:"「夜は充電器をリビングに置くルールにしない？俺もやるから」と一緒に始める", fx:{trust:+10, rhythm:+10, honne:-1},
+        honne:"（“俺も”って言った。ずるくないルールなら、まあ…やってもいい）" } ] },
+  { day:3, scene:"弟が学校の宿題をやらずにゲームをしている。親から「あんたからも言ってよ」とLINEが来た。",
+    choices:[
+      { t:"強要", label:"「宿題やるまでゲーム没収」と親の代わりに言い渡す", fx:{rhythm:+10, trust:-15, honne:+2},
+        honne:"（兄ちゃんまで敵になった。もう味方いない）" },
+      { t:"放任", label:"「俺は関係ない」と既読スルーする", fx:{room:+5, honne:+1},
+        honne:"（誰も僕に興味ないんだ）" },
+      { t:"工夫", label:"「宿題見せて。終わったら一緒に1戦やろう」と隣に座る", fx:{trust:+15, rhythm:+5, room:-5, honne:-2},
+        honne:"（一緒にやってくれた！ 兄ちゃんに勝ったの、見ててくれた）" } ] },
+  { day:4, scene:"【事件】親のスマホに身に覚えのない課金の通知。弟が親のカードでガチャを回していた。親は激怒し、家の空気が凍っている。",
+    choices:[
+      { t:"強要", label:"「もう当分ゲーム禁止。当然だろ」と親に加勢する", fx:{rhythm:+10, trust:-20, honne:+3},
+        honne:"（悪いことしたのは分かってる。でも“なんで欲しかったか”は誰も聞かない）" },
+      { t:"放任", label:"嵐が過ぎるのを自室で待つ", fx:{room:+5, trust:-5, honne:+2},
+        honne:"（兄ちゃんは見てただけ。誰も助けてくれない）" },
+      { t:"工夫", label:"叱られた後で「何が欲しかったの」と二人きりで聞き、返し方を一緒に考える", fx:{trust:+15, rhythm:+5, honne:-2},
+        honne:"（友だちがみんな持ってるキャラだった…って、初めて言えた。怒らずに聞いてくれた）" } ] },
+  { day:5, scene:"弟が「このゲームのボス、俺が考えた作戦で倒せたんだよ！」と興奮して話しかけてくる。自分は課題で忙しい。",
+    choices:[
+      { t:"強要", label:"「今忙しい。それより宿題やったの？」と話を切る", fx:{room:+5, trust:-15, honne:+3},
+        honne:"（もう二度と話さない。楽しかったのに）" },
+      { t:"放任", label:"「へー、すごいじゃん」と画面を見ずに相槌を打つ", fx:{room:+5, trust:-5, honne:+1},
+        honne:"（見てないのバレバレ。“すごい”が軽い）" },
+      { t:"工夫", label:"5分だけ手を止めて「どんな作戦？」とリプレイを見る", fx:{trust:+15, room:-5, honne:-2},
+        honne:"（僕の作戦を“頭いいな”って言ってくれた。明日も頑張れる）" } ] },
+  { day:6, scene:"親がついに「スマホ解約する」と言い出した。弟は部屋に篭城。板挟みの夕方。",
+    choices:[
+      { t:"強要", label:"親に従う。「ルールを守らなかった方が悪い」", fx:{rhythm:+5, trust:-15, honne:+3},
+        honne:"（全部取り上げるなら、家にいる意味なんてない）" },
+      { t:"放任", label:"「好きにすれば」と距離を置く", fx:{room:+5, trust:-10, honne:+2},
+        honne:"（この家では、困っても誰にも言わないことにした）" },
+      { t:"工夫", label:"親に弟の頑張りと本音を通訳し、「取り上げる以外の条件」を三人で決める場を作る", fx:{trust:+20, rhythm:+10, room:-10, honne:-3},
+        honne:"（兄ちゃんが“こいつ最近ちゃんとやってる”って言ってくれた。約束、守ってみようと思う）" } ] },
+  { day:7, scene:"日曜の午後。弟がリビングで所在なさげにしている。スマホは充電中。ふと目が合った。",
+    choices:[
+      { t:"強要", label:"「暇なら勉強したら」と促す", fx:{rhythm:+5, trust:-10, honne:+2},
+        honne:"（僕はスマホがないと、いる意味もないのかな）" },
+      { t:"放任", label:"自分もスマホを見て、それぞれの時間を過ごす", fx:{room:+5, honne:+1},
+        honne:"（同じ部屋にいるのに、遠い）" },
+      { t:"工夫", label:"「ゲーム以外で暇つぶし教えてやるよ」と自転車で外に連れ出す", fx:{trust:+15, honne:-2},
+        honne:"（スマホ以外の遊び、初めてかも。…疲れたけど、ちょっと楽しかった）" } ] },
+];
+
+function Meter({label, v, color}) {
+  return (
+    <div className="meter">
+      <label>{label} {v}</label>
+      <div className="bar"><div style={{width: Math.max(0,Math.min(100,v))+"%", background:color}}/></div>
+    </div>);
+}
+
+function App() {
+  const [scene, setScene] = useState('title');   // Scene遷移: title → play
+  const [i, setI] = useState(0);
+  const [m, setM] = useState({trust:50, rhythm:50, room:50, honne:0});
+  const [picked, setPicked] = useState(null);
+  const [showHonne, setShowHonne] = useState(false);
+
+  const done = i >= EVENTS.length;
+  const ev = EVENTS[Math.min(i, EVENTS.length-1)];
+
+  function choose(c) {
+    if (picked) return;
+    setPicked(c);
+    setM(s => ({
+      trust: s.trust + (c.fx.trust||0), rhythm: s.rhythm + (c.fx.rhythm||0),
+      room: s.room + (c.fx.room||0), honne: s.honne + (c.fx.honne||0) }));
+    setTimeout(() => setShowHonne(true), 1400);   // 本音は一拍遅れて届く
+  }
+  function next() { setPicked(null); setShowHonne(false); setI(i+1); }
+
+  // 本音の距離が開くほど家の彩度が落ちる（設計書: 画面だけが鮮やかな家）
+  const sat = Math.max(.25, 1 - m.honne * 0.06);
+
+  if (scene === 'title') return (
+    <div className="house" style={{textAlign:'center', padding:'46px 24px',
+      background:'linear-gradient(165deg, #fff 55%, #f1d7e7)'}}>
+      <div style={{fontSize:46, filter:'drop-shadow(0 0 12px #e9a3c0)'}}>🏠</div>
+      <h1 style={{fontSize:26, letterSpacing:'.12em', justifyContent:'center'}}>スクリーンタイム</h1>
+      <p style={{fontSize:13, color:'#8a5f74', lineHeight:2.1}}>
+        同じ一週間を、親と子の両方で二度生きる。<br/>
+        あなたは小学生の弟がいる兄。7日間の選択が、家の空気を変える。<br/>
+        <span style={{color:'#b98aa0', fontSize:12}}>— 表のメーターは嘘をつく。本音だけが結末を決める —</span>
+      </p>
+      <button className="next" onClick={()=>setScene('play')} style={{marginTop:10}}>▶ 一週間を始める</button>
+    </div>);
+
+  let ending = null;
+  if (done) {
+    if (m.trust >= 90 && m.honne <= 2)
+      ending = {t:"🌸 歩み寄りエンド", d:"スマホは今日も家にある。でも夕飯の席で今日のボスの話が出る。取り上げなくても、暮らしは回り始めた。困ったとき、弟はまずあなたに話すようになった。"};
+    else if (m.rhythm >= 70)
+      ending = {t:"🌫 表面的な平和エンド", d:"ルールは守られている。時間も守られている。ただ、弟が最後に「楽しかったこと」を話してくれたのがいつだったか、思い出せない。（本音の距離: " + m.honne + "）"};
+    else
+      ending = {t:"🌒 溝エンド", d:"弟は部屋から出てこなくなった。画面の光だけが、ドアの隙間から漏れている。——依存で最初に壊れるのは成績でも視力でもなく、関係だった。"};
+  }
+
+  return (
+    <div className="house" style={{filter:`saturate(${sat})`}}>
+      <h1>🏠 スクリーンタイム PoC</h1>
+      <div className="sub">あなたは小学生の弟がいる兄。7日間の選択が、家の空気を変える。</div>
+      <div className="meters">
+        <Meter label="弟との信頼" v={m.trust} color="#e9a3c0"/>
+        <Meter label="生活リズム" v={m.rhythm} color="#a7dae1"/>
+        <Meter label="家族のゆとり" v={m.room} color="#ffefc8"/>
+      </div>
+      {!done && <>
+        <div className="day">Day {ev.day} / 7 {ev.day===4 && "（事件）"}</div>
+        <div className="scene">{ev.scene}</div>
+        {!picked && ev.choices.map((c,k) =>
+          <button key={k} className="choice" onClick={()=>choose(c)}>
+            <b>【{c.t}】</b> {c.label}
+          </button>)}
+        {picked && <div className="scene">▶ {picked.label}</div>}
+        {showHonne && <div className="honne">💭 弟の本音: {picked.honne}</div>}
+        {showHonne && <button className="next" onClick={next}>{i===EVENTS.length-1 ? "結末へ" : "次の日へ"}</button>}
+      </>}
+      {done && ending &&
+        <div className="ending">
+          <h2>{ending.t}</h2>
+          <p>{ending.d}</p>
+          <p style={{fontSize:"12px", color:"#888"}}>強要も放任も表のメーターは動く。だが「本音の距離」（隠しパラメータ: {m.honne}）だけがエンディングの色を決める。</p>
+          <button className="next" onClick={()=>{ setI(0); setM({trust:50,rhythm:50,room:50,honne:0}); }}>もう一度</button>
+        </div>}
+    </div>);
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

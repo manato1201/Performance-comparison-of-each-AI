@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 植物娘育成ホラー — SVG成長×彩度遷移の検証</title>
+<style>
+  body { margin:0; font-family:"Yu Gothic UI",sans-serif; background:#fff3d4;
+         display:flex; justify-content:center; min-height:100vh; transition:background 2s; }
+  #wrap { width:min(720px,94vw); padding:16px 0 50px; }
+  .room { border-radius:16px; background:#fff; box-shadow:0 4px 18px rgba(0,0,0,.1);
+          padding:18px 22px; transition:filter 1.5s; }
+  h1 { font-size:16px; color:#2e5e46; margin:0 0 4px; }
+  .sub { font-size:12px; color:#888; margin-bottom:10px; }
+  #garden { display:flex; justify-content:center; background:linear-gradient(#e8f4fb,#f6f9ee);
+            border-radius:12px; margin:8px 0; }
+  .meters { display:flex; gap:10px; margin:8px 0; flex-wrap:wrap; }
+  .meter { flex:1; min-width:120px; }
+  .meter label { font-size:11px; color:#666; }
+  .bar { height:9px; background:#eee; border-radius:5px; overflow:hidden; }
+  .bar div { height:100%; transition:width .6s; }
+  .acts { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  .acts button { padding:9px 16px; border:2px solid #a1c9a8; border-radius:12px; background:#fff;
+                 cursor:pointer; font-size:13px; }
+  .acts button:hover { background:#eef7ee; transform:translateY(-2px); }
+  #msg { min-height:44px; background:#f4f9f2; border-left:5px solid #5ea589; border-radius:8px;
+         padding:10px 14px; font-size:13px; line-height:1.7; }
+  #day { font-weight:bold; color:#2e5e46; }
+  /* Scene遷移: タイトル */
+  #titleScene { position:fixed; inset:0; z-index:50; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    background:radial-gradient(ellipse at 50% 38%, #35634b, #101f16 75%);
+    transition:opacity .9s, visibility .9s; }
+  #titleScene.hidden { opacity:0; visibility:hidden; }
+  #titleScene h1 { color:#fff; font-size:40px; letter-spacing:.15em; margin:0;
+    text-shadow:0 0 22px #8fd4a8, 0 0 60px #2e5e46; }
+  #titleScene .sub { color:#c8e3bd; font-size:14px; margin:14px 0 30px; line-height:2; }
+  #titleScene button { padding:12px 46px; font-size:15px; border:1px solid #c8e3bd; border-radius:24px;
+    background:rgba(200,227,189,.12); color:#c8e3bd; cursor:pointer; letter-spacing:.1em; transition:all .25s; }
+  #titleScene button:hover { background:#c8e3bd; color:#1e3a2b; box-shadow:0 0 28px rgba(200,227,189,.8); }
+  #titleScene .seed { font-size:44px; margin-bottom:10px; filter:drop-shadow(0 0 14px #8fd4a8); }
+</style>
+</head>
+<body>
+<div id="titleScene">
+  <div class="seed">🌱</div>
+  <h1>SEEDLING</h1>
+  <div class="sub">植物娘育成ホラー PoC<br>きっかけ一つで、あなたの味方にも敵にもなります</div>
+  <button onclick="document.getElementById('titleScene').classList.add('hidden')">▶ 培養を始める</button>
+</div>
+<div id="wrap">
+  <div class="room" id="room">
+    <h1>🌱 植物娘育成ホラー PoC</h1>
+    <div class="sub">検証: パラメータ→SVG成長の直結・攻撃性→画面LUT（彩度/色相）遷移・「数値を見せずに状態を伝える」</div>
+    <div><span id="day">Day 1</span> / 14 — 種子から芽が出て、女の子のかたちをしている…</div>
+    <div id="garden">
+      <svg id="plant" width="300" height="260" viewBox="0 0 300 260"></svg>
+    </div>
+    <div class="meters">
+      <div class="meter"><label>成長</label><div class="bar"><div id="mGrow" style="background:#5ea589;width:5%"></div></div></div>
+      <div class="meter"><label>信頼</label><div class="bar"><div id="mTrust" style="background:#f6bfbb;width:50%"></div></div></div>
+      <div class="meter"><label>自我</label><div class="bar"><div id="mEgo" style="background:#f6b371;width:10%"></div></div></div>
+      <div class="meter"><label>攻撃性（隠し）</label><div class="bar"><div id="mAggro" style="background:#da2730;width:0%"></div></div></div>
+    </div>
+    <div class="acts">
+      <button onclick="act('water')">💧 水をやる</button>
+      <button onclick="act('sun')">☀ 日に当てる</button>
+      <button onclick="act('talk')">💬 話しかける</button>
+      <button onclick="act('teach')">📖 教育する</button>
+      <button onclick="act('neglect')">🚪 放置する</button>
+    </div>
+    <div id="msg">育て方はあなたの自由。ただし、偏った育成は…</div>
+  </div>
+</div>
+<script>
+let day=1, grow=5, trust=50, ego=10, aggro=0, ended=false;
+let waterC=0, sunC=0, talkC=0, teachC=0, neglectC=0, lastAct='';
+
+const EFFECT={
+  water:  ()=>{ waterC++; grow+=6; if(lastAct==='water'&&waterC>3){aggro+=6; return '…根が水で膨れている。少し嫌がっている気がする（過保護の兆候）';} return 'ごくごく。葉がつやつやになった'; },
+  sun:    ()=>{ sunC++; grow+=6; ego+=3; return '陽の光に向かって、うれしそうに伸びる'; },
+  talk:   ()=>{ talkC++; trust+=7; ego+=2; return '「…おはな、し、すき」 片言で返事をした！'; },
+  teach:  ()=>{ teachC++; ego+=7; grow+=3; if(trust<40){aggro+=8; return '知識を吸収している。だが目つきが……（信頼が低いまま教えると危険）';} return '文字を覚えた。「じぶん」という言葉に興味を持っている'; },
+  neglect:()=>{ neglectC++; trust-=9; aggro+=7; grow+=2; return '部屋に戻ると、鉢の位置が…変わっている？'; },
+};
+function act(kind){
+  if(ended) return;
+  const m=EFFECT[kind]();
+  lastAct=kind;
+  grow=Math.min(100,grow); trust=Math.max(0,Math.min(100,trust));
+  ego=Math.min(100,ego); aggro=Math.max(0,Math.min(100,aggro));
+  day++;
+  document.getElementById('day').textContent='Day '+day;
+  document.getElementById('msg').textContent=m;
+  render();
+  if(day>14) finale();
+}
+function finale(){
+  ended=true;
+  const msg=document.getElementById('msg');
+  if(aggro>=45) msg.innerHTML='<b>🥀 敵対エンド</b> — 夜中、ツルが部屋の戸を叩く音がする。彼女はもう、あなたの「育てた通り」に育ってしまった。';
+  else if(trust>=75 && ego>=50) msg.innerHTML='<b>🌸 自立エンド</b> — 「いってきます」。窓辺の鉢は空になっていた。土の上に、小さな花が一輪だけ残されている。';
+  else if(trust>=60) msg.innerHTML='<b>🌿 共依存エンド</b> — 彼女はあなたなしでは眠れない。あなたも、彼女なしでは。それは幸福に見える檻だった。';
+  else msg.innerHTML='<b>🍂 枯れエンド</b> — ある朝、葉がすべて落ちていた。最後まで、彼女の言葉を聞いてあげられなかった。';
+}
+
+// ---- SVGプラント描画（成長段階＋攻撃性で形が変わる） ----
+const svg=document.getElementById('plant');
+function render(){
+  document.getElementById('mGrow').style.width=grow+'%';
+  document.getElementById('mTrust').style.width=trust+'%';
+  document.getElementById('mEgo').style.width=ego+'%';
+  document.getElementById('mAggro').style.width=aggro+'%';
+  // LUT遷移: 攻撃性で部屋の彩度低下＋色相を赤へ
+  document.getElementById('room').style.filter=
+    `saturate(${1-aggro*.007}) hue-rotate(${-aggro*.35}deg)`;
+  document.body.style.background = aggro>50 ? '#4e2830' : '#fff3d4';
+
+  const segs=Math.max(1,Math.floor(grow/12));           // 茎の節数
+  const lean=(aggro-20)*.25;                            // 攻撃性で傾く
+  const leafCol = aggro>50 ? '#9a5a4e' : '#a1c9a8';
+  const stemCol = aggro>50 ? '#6b4444' : '#5ea589';
+  let d=`M150 240`;
+  let x=150,y=240;
+  const pts=[[x,y]];
+  for(let i=0;i<segs;i++){
+    x+= Math.sin(i*1.3)*10 + lean;
+    y-= 20;
+    d+=` Q ${x+8} ${y+10} ${x} ${y}`;
+    pts.push([x,y]);
+  }
+  let s=`<ellipse cx="150" cy="245" rx="46" ry="12" fill="#c8a27a"/>`; // 鉢土
+  s+=`<path d="${d}" stroke="${stemCol}" stroke-width="7" fill="none" stroke-linecap="round"
+       style="transition:all 1s"/>`;
+  // 葉
+  for(let i=1;i<pts.length;i++){
+    const [lx,ly]=pts[i], side=i%2?1:-1;
+    s+=`<ellipse cx="${lx+side*16}" cy="${ly+4}" rx="15" ry="7" fill="${leafCol}"
+        transform="rotate(${side*-24} ${lx+side*16} ${ly+4})" style="transition:fill 1s"/>`;
+  }
+  // 顔（花の中心）: 表情が信頼・攻撃性で変化
+  const [hx,hy]=pts[pts.length-1];
+  const petal = aggro>50 ? '#c65244' : (trust>60?'#f6bfbb':'#e8d8c8');
+  if(grow>25){
+    for(let i=0;i<8;i++){
+      const a=i/8*Math.PI*2;
+      s+=`<ellipse cx="${hx+Math.cos(a)*16}" cy="${hy-10+Math.sin(a)*16}" rx="9" ry="5.5"
+          fill="${petal}" transform="rotate(${a*57.3} ${hx+Math.cos(a)*16} ${hy-10+Math.sin(a)*16})"
+          style="transition:fill 1s"/>`;
+    }
+    s+=`<circle cx="${hx}" cy="${hy-10}" r="12" fill="#fff8ec"/>`;
+    const eye = aggro>50 ? 'M-4 0 L-1 -3 M1 -3 L4 0' : 'M-4 -1 a2 2 0 1 0 .1 0 M2 -1 a2 2 0 1 0 .1 0';
+    const mouth = aggro>50 ? `M-3 5 Q0 2 3 5` : (trust>60 ? `M-3 3 Q0 7 3 3` : `M-2 4 L2 4`);
+    s+=`<g transform="translate(${hx} ${hy-10})" stroke="#5a4632" stroke-width="1.6" fill="none">
+        <path d="${eye}"/><path d="${mouth}"/></g>`;
+  }
+  // 攻撃性が高いと根が這い出る
+  if(aggro>35){
+    for(let i=0;i<Math.floor((aggro-30)/15);i++){
+      s+=`<path d="M${120+i*30} 250 q ${10+i*6} 14 ${26+i*10} 6" stroke="#6b4444"
+          stroke-width="3" fill="none" opacity=".8"/>`;
+    }
+  }
+  svg.innerHTML=s;
+}
+render();
+// 呼吸アニメーション
+setInterval(()=>{ if(!ended) svg.style.transform=`scale(${1+Math.sin(Date.now()/900)*.01})`; },50);
+</script>
+</body>
+</html>

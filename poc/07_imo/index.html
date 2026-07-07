@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: imo — 調理形態変化×相性バトルの検証</title>
+<style>
+  body { margin:0; background:#212557; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#fee59f; }
+  #info { font-size:12px; color:#c8b5b3; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#fee59f; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🥔 imo PoC — ←→移動 / Z攻撃。調理器具に触れて形態変化（地形＝変身装置）</h1>
+<div id="info">検証: 器具トリガー変身・調理法vs食材の相性・スカッシュ&ストレッチのコミカル表現</div>
+<div id="stage"></div>
+<div id="hud">形態: <b id="form">生いも</b>　撃破: <b id="kill">0</b>　<span id="tip">こんにゃく芋には「カリカリ(揚げ)」が無効…どう倒す？</span></div>
+<script>
+const W=880,H=420,GROUND=350;
+const app=new PIXI.Application({width:W,height:H,background:0x445c8d,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'imo', sub:'ポテトプリンスの冒険 — ←→移動 / Z攻撃、器具に触れて変身（Pでピクセル化）',
+  accent:0xfee59f, accent2:0xb1585b, bloomThreshold:.65 });
+
+// 背景: キッチン奥壁とタイル（最中の月パレット）
+const bg=new PIXI.Graphics();
+bg.beginFill(0x2f3f6b).drawRect(0,0,W,GROUND).endFill();
+for(let x=0;x<W;x+=44) for(let y=0;y<GROUND;y+=44)
+  bg.lineStyle(1,0x3a4a7a,.6).drawRect(x,y,44,44);
+bg.lineStyle(0);
+bg.beginFill(0xc8b5b3).drawRect(0,GROUND,W,H-GROUND).endFill();   // 調理台
+bg.beginFill(0xfcfdf3,.3).drawRect(0,GROUND,W,6).endFill();
+app.stage.addChild(bg);
+
+// ---- 調理器具（地形＝変身装置） ----
+const FORMS={
+  raw:  {label:'生いも', color:0xfee59f, dmg:1, note:''},
+  fried:{label:'カリカリポテト(揚げ)', color:0xe0a050, dmg:3, note:'近接特化'},
+  salad:{label:'ポテサラー(ゆで)', color:0xfcfdf3, dmg:1, heal:true, note:'回復・バフ'},
+  shaman:{label:'シャーマンポテト(芽)', color:0x8bc34a, dmg:2, debuff:true, note:'デバフ'},
+};
+const stations=[
+  {x:150,form:'fried', label:'油鍋(揚げる)', color:0xe07b24},
+  {x:420,form:'salad', label:'鍋(ゆでる)', color:0x83c2e2},
+  {x:690,form:'shaman',label:'毒沼(芽が出る)', color:0x8bc34a},
+];
+for(const s of stations){
+  const g=new PIXI.Graphics();
+  if(s.form==='fried'){
+    // 揚げ鍋: 深鍋＋両取っ手＋煮立つ油＋泡
+    g.beginFill(0x2a2a3a); g.moveTo(-34,-26); g.bezierCurveTo(-36,-6,-30,0,0,0);
+    g.bezierCurveTo(30,0,36,-6,34,-26); g.closePath().endFill();
+    g.lineStyle(4,0x2a2a3a).moveTo(-34,-20).quadraticCurveTo(-46,-18,-40,-8)
+      .moveTo(34,-20).quadraticCurveTo(46,-18,40,-8); g.lineStyle(0);
+    g.beginFill(0xe07b24,.95).drawEllipse(0,-26,30,7).endFill();
+    g.beginFill(0xf7dc41,.8).drawCircle(-12,-27,2.5).drawCircle(8,-25,2).drawCircle(16,-28,1.6).endFill();
+  } else if(s.form==='salad'){
+    // 寸胴鍋: 銀胴＋リベット＋蓋のつまみ＋湯
+    g.beginFill(0x8a97a8); g.moveTo(-30,-26); g.lineTo(30,-26);
+    g.bezierCurveTo(32,-8,28,0,0,0); g.bezierCurveTo(-28,0,-32,-8,-30,-26); g.closePath().endFill();
+    g.beginFill(0xb8c4d2,.7).drawRect(-26,-24,8,22).endFill();  // 金属ハイライト
+    g.beginFill(0x5a6575).drawCircle(-20,-14,1.5).drawCircle(0,-12,1.5).drawCircle(20,-14,1.5).endFill();
+    g.beginFill(0x83c2e2,.95).drawEllipse(0,-26,26,6).endFill();
+    g.beginFill(0xffffff,.55).drawEllipse(-8,-27,7,2).endFill();
+  } else {
+    // 毒沼: 不定形の沼＋気泡＋芽
+    FXS.blob(g,0x5f7a3a,34,11,.35,91,1,0,-8);
+    FXS.blob(g,0x8bc34a,26,10,.4,92,.9,0,-9);
+    g.beginFill(0xc5e08a,.9).drawCircle(-12,-10,3).drawCircle(10,-7,2.2).drawCircle(2,-14,1.8).endFill();
+    g.lineStyle(2,0x3f5a24).moveTo(-4,-16).quadraticCurveTo(-6,-26,-2,-30); g.lineStyle(0);
+    FXS.leaf(g,0x8bc34a,10,4,.5,-2,-30);
+  }
+  g.position.set(s.x,GROUND); app.stage.addChild(g);
+  s.g=g;
+  const t=new PIXI.Text(s.label,{fontSize:11,fill:0xfcfdf3});
+  t.anchor.set(.5); t.position.set(s.x,GROUND-46); app.stage.addChild(t);
+  // 湯気
+  s.steam=[];
+}
+
+// ---- プレイヤー: ポテトプリンス ----
+const hero=new PIXI.Container();
+const hb=new PIXI.Graphics(); hero.addChild(hb);
+function drawHero(color){
+  hb.clear();
+  hb.beginFill(0x000000,.2).drawEllipse(0,0,15,4).endFill();          // 影
+  // マント（背中側ベジェ）
+  hb.beginFill(0xb1585b,.95);
+  hb.moveTo(-13,-27); hb.bezierCurveTo(-24,-14,-23,0,-15,-1);
+  hb.quadraticCurveTo(-16,-14,-11,-24); hb.closePath().endFill();
+  // 芋体（ゴツゴツの有機ブロブ）
+  FXS.blob(hb,color,19,10,.24,77,1,0,-18);
+  // 芽の痕・そばかす
+  hb.beginFill(0x000000,.12).drawEllipse(-8,-25,2.6,1.6).drawEllipse(8,-11,2.6,1.6).drawEllipse(3,-30,2,1.2).endFill();
+  // ほっぺ・目（つぶら＋光）
+  hb.beginFill(0xf6bfbb,.85).drawEllipse(-8,-14,3.2,2.2).drawEllipse(8,-14,3.2,2.2).endFill();
+  hb.beginFill(0x212557).drawCircle(-5,-20,2.6).drawCircle(5,-20,2.6).endFill();
+  hb.beginFill(0xffffff).drawCircle(-4.2,-20.8,1).drawCircle(5.8,-20.8,1).endFill();
+  hb.lineStyle(1.5,0x8a6a4a).moveTo(-2,-13).quadraticCurveTo(0,-11,2,-13); hb.lineStyle(0);
+  // 王冠（ギザ＋宝石）
+  hb.beginFill(0xfdda83).drawPolygon([-9,-33,-7,-42,-3.5,-35,0,-45,3.5,-35,7,-42,9,-33]).endFill();
+  hb.beginFill(0xd64565).drawCircle(0,-36,2).endFill();
+  hb.beginFill(0xffffff,.6).drawCircle(-.6,-36.6,.8).endFill();
+}
+drawHero(0xfee59f);
+hero.position.set(80,GROUND);
+app.stage.addChild(hero);
+const P={x:80,face:1,form:'raw',sq:1,cool:0};
+
+// ---- 敵（芋科縛り・特性テーブル） ----
+const ENEMY_TYPES=[
+  {name:'さつまいも', color:0xa05070, hp:3, speed:.5, weak:'fried'},
+  {name:'こんにゃく芋', color:0x9a9a8a, hp:2, speed:.8, immune:'fried', weak:'shaman'},
+  {name:'長芋', color:0xd8cbb0, hp:2, speed:1.1, weak:null},
+];
+const enemies=[];
+function spawnEnemy(){
+  const t=ENEMY_TYPES[Math.floor(Math.random()*ENEMY_TYPES.length)];
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics();
+  const seed=(t.name.charCodeAt(0)*131+Math.random()*1e6)|0;
+  g.beginFill(0x000000,.18).drawEllipse(0,0,13,3.5).endFill(); // 影
+  if(t.name==='さつまいも'){
+    // 紡錘形ベジェ＋根ヒゲ＋皮のスジ
+    g.beginFill(0x8a4a6b);
+    g.moveTo(0,-36); g.bezierCurveTo(15,-31,16,-8,0,-1);
+    g.bezierCurveTo(-16,-8,-15,-31,0,-36); g.closePath().endFill();
+    g.beginFill(0xa05070,.7);
+    g.moveTo(-4,-33); g.bezierCurveTo(6,-30,8,-14,2,-6);
+    g.quadraticCurveTo(-6,-18,-4,-33); g.closePath().endFill();
+    g.lineStyle(1.5,0x5e3048,.9);
+    g.moveTo(-7,-8).quadraticCurveTo(-11,0,-9,4);
+    g.moveTo(6,-6).quadraticCurveTo(10,2,7,6);
+    g.moveTo(0,-36).quadraticCurveTo(2,-42,0,-45);
+    g.lineStyle(0);
+  } else if(t.name==='こんにゃく芋'){
+    // ぷるぷる不定形スラブ＋斑点
+    FXS.blob(g,0x9a9a8a,17,11,.45,seed,1,0,-16);
+    FXS.blob(g,0xb5b5a5,10,9,.4,seed+2,.6,-3,-19);
+    g.beginFill(0x6a6a5c,.6).drawCircle(-7,-10,1.5).drawCircle(6,-24,1.3).drawCircle(9,-12,1.1).drawCircle(-3,-27,1).endFill();
+  } else {
+    // 長芋: 縦長ブロブ＋ヒゲ根多数
+    FXS.blob(g,0xd8cbb0,13,9,.3,seed,1,0,-22);
+    FXS.blob(g,0xd8cbb0,11,9,.35,seed+5,1,2,-8);
+    g.lineStyle(1,0x9a8a6a,.9);
+    for(let i=0;i<7;i++){ const hx=-10+i*3.4, hy=-26+((i*7)%18);
+      g.moveTo(hx,hy).quadraticCurveTo(hx-3,hy+4,hx-2,hy+7); }
+    g.lineStyle(0);
+  }
+  // 共通の顔（白目→瞳→光）
+  g.beginFill(0xffffff).drawCircle(-4.5,-21,3.4).drawCircle(4.5,-21,3.4).endFill();
+  g.beginFill(0x212557).drawCircle(-3.8,-21,1.7).drawCircle(5.2,-21,1.7).endFill();
+  g.beginFill(0xffffff).drawCircle(-3.3,-21.6,.7).drawCircle(5.7,-21.6,.7).endFill();
+  c.addChild(g);
+  const nm=new PIXI.Text(t.name,{fontSize:10,fill:0xfcfdf3});
+  nm.anchor.set(.5); nm.position.set(0,-44); c.addChild(nm);
+  c.position.set(W+20,GROUND);
+  app.stage.addChild(c);
+  enemies.push({c,...t,hp:t.hp,x:W+20,wob:Math.random()*9});
+}
+setInterval(()=>{ if(FX.playing) spawnEnemy(); },2200); spawnEnemy();
+
+// ---- パーティクル ----
+const parts=[];
+function burst(x,y,color,n=14,spd=4){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*3).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:1});
+    app.stage.addChild(g);
+  }
+}
+function floatText(x,y,txt,color){
+  const t=new PIXI.Text(txt,{fontSize:18,fill:color,fontWeight:'bold',stroke:0x212557,strokeThickness:4});
+  t.anchor.set(.5); t.position.set(x,y); app.stage.addChild(t);
+  parts.push({g:t,vx:0,vy:-1.2,life:1.3});
+}
+let kills=0,shake=0;
+const keys={};
+addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code==='KeyZ') attack(); });
+addEventListener('keyup',e=>keys[e.code]=false);
+function attack(){
+  if(!FX.playing||P.cool>0) return; P.cool=18;
+  P.sq=.7; shake=2;
+  const F=FORMS[P.form];
+  burst(P.x+P.face*30,GROUND-20,F.color,8,3);
+  for(const e of enemies){
+    if(e.dead) continue;
+    if(Math.abs(e.x-(P.x+P.face*30))<34){
+      let dmg=F.dmg, txt='-'+F.dmg, col=0xfcfdf3;
+      if(e.immune===P.form){ dmg=0; txt='無効!'; col=0x9a9a8a; }
+      else if(e.weak===P.form){ dmg*=2; txt='-'+dmg+' 弱点!'; col=0xfee59f; }
+      e.hp-=dmg;
+      floatText(e.x,GROUND-60,txt,col);
+      e.c.scale.x=1.3; e.c.scale.y=.7; // 被弾スカッシュ
+      if(e.hp<=0){
+        e.dead=true; app.stage.removeChild(e.c);
+        kills++; document.getElementById('kill').textContent=kills;
+        burst(e.x,GROUND-20,e.color,20,6); shake=6;
+      }
+    }
+  }
+}
+app.ticker.add(dt=>{
+  if(!FX.playing) return;
+  P.cool=Math.max(0,P.cool-dt);
+  const dir=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);
+  if(dir){ P.face=dir; P.x=Math.max(30,Math.min(W-30,P.x+dir*3*dt)); }
+  P.sq+=(1-P.sq)*.18*dt;
+  hero.scale.set(P.face*(2-P.sq),P.sq);
+  hero.position.set(P.x, GROUND + (dir?Math.abs(Math.sin(performance.now()/90))*-6:0));
+  // 器具で変身
+  for(const s of stations){
+    s.g.scale.y=1+Math.sin(performance.now()/300+s.x)*.05;
+    if(Math.abs(P.x-s.x)<30 && P.form!==s.form){
+      P.form=s.form;
+      drawHero(FORMS[s.form].color);
+      document.getElementById('form').textContent=FORMS[s.form].label;
+      document.getElementById('tip').textContent=FORMS[s.form].note?`効果: ${FORMS[s.form].note}`:'';
+      burst(P.x,GROUND-30,FORMS[s.form].color,22,5);
+      floatText(P.x,GROUND-70,'ポテトの目覚め！',0xfee59f);
+      P.sq=1.5; shake=4;
+    }
+    // 湯気パーティクル
+    if(Math.random()<.06*dt){
+      const g=new PIXI.Graphics();
+      g.beginFill(0xffffff,.35).drawCircle(0,0,4+Math.random()*4).endFill();
+      g.position.set(s.x+(Math.random()-.5)*40,GROUND-34);
+      parts.push({g,vx:(Math.random()-.5)*.3,vy:-.8,life:1});
+      app.stage.addChild(g);
+    }
+  }
+  // 敵移動
+  for(const e of enemies){
+    if(e.dead) continue;
+    e.wob+=dt*.1; e.x-=e.speed*dt;
+    e.c.position.set(e.x, GROUND + Math.abs(Math.sin(e.wob*2))*-6);
+    e.c.scale.x+=(1-e.c.scale.x)*.15*dt; e.c.scale.y+=(1-e.c.scale.y)*.15*dt;
+    if(e.x<-30){ e.dead=true; app.stage.removeChild(e.c); }
+  }
+  enemies.splice(0,enemies.length,...enemies.filter(e=>!e.dead));
+  for(const p of parts){
+    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.06*dt; p.life-=.025*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

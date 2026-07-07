@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: ホロの学び舎 — 算数インベーダー×高度演出の検証</title>
+<style>
+  body { margin:0; background:#111; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#ffdf5e; }
+  #info { font-size:12px; color:#a1c6ea; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #answer { margin:10px; padding:8px 18px; font-size:20px; width:130px; text-align:center;
+            border-radius:22px; border:3px solid #5baedb; outline:none; background:#0d2233; color:#ffdf5e; }
+  #hud { font-size:13px; }  #hud b { color:#ffdf5e; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🏫 ホロの学び舎 PoC — 落ちてくる計算式の答えを入力してEnter！</h1>
+<div id="info">検証: 出題エンジン・正解＝青/不正解＝赤の色の文法・高度上昇演出（地中→地表→空→大気圏→宇宙→銀河）</div>
+<div id="stage"></div>
+<input id="answer" type="number" placeholder="答え" autofocus>
+<div id="hud">スコア: <b id="score">0</b>　ライフ: <b id="life">3</b>　高度: <b id="alt">地中</b></div>
+<script>
+const W=880,H=430;
+const app=new PIXI.Application({width:W,height:H,background:0x34455c,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'ホロの学び舎', sub:'算数インベーダー — 答えを入力してEnter（Pでピクセル化）',
+  accent:0xffdf5e, accent2:0x5baedb, bloomThreshold:.6 });
+
+// ---- 高度パレット（kotonoha_sai）: スコアで背景が地中→銀河へ遷移 ----
+const ALT=[
+  {name:'地中',   top:0x34455c, bot:0x885f3e, at:0},
+  {name:'地表',   top:0x5dbf4e, bot:0x94c58b, at:60},
+  {name:'空',     top:0x486783, bot:0x889cab, at:140},
+  {name:'大気圏', top:0x1169a3, bot:0x49afd3, at:240},
+  {name:'宇宙',   top:0x0f1d3e, bot:0x004492, at:360},
+  {name:'銀河',   top:0x142664, bot:0x7b4d95, at:500},
+];
+const bgG=new PIXI.Graphics(); app.stage.addChild(bgG);
+function lerpColor(a,b,t){
+  const ar=a>>16,ag=a>>8&255,ab=a&255, br=b>>16,bg=b>>8&255,bb=b&255;
+  return ((ar+(br-ar)*t)<<16)|((ag+(bg-ag)*t)<<8)|(ab+(bb-ab)*t);
+}
+let bgTop=ALT[0].top, bgBot=ALT[0].bot;
+function drawBG(){
+  bgG.clear();
+  for(let i=0;i<20;i++){
+    bgG.beginFill(lerpColor(bgTop,bgBot,i/19)).drawRect(0,i*H/20,W,H/20+1).endFill();
+  }
+}
+drawBG();
+// 星（宇宙以降で出現）
+const stars=new PIXI.Container(); app.stage.addChild(stars); stars.alpha=0;
+for(let i=0;i<60;i++){
+  const s=new PIXI.Graphics();
+  s.beginFill(0xffffff).drawCircle(0,0,Math.random()*1.8+.5).endFill();
+  s.position.set(Math.random()*W,Math.random()*H); s.a0=Math.random()*7;
+  stars.addChild(s);
+}
+
+// ---- 出題エンジン（教科×難易度のデータ駆動の最小形） ----
+let score=0,life=3,level=0;
+function makeQ(){
+  const lv=Math.min(3,Math.floor(score/100));
+  const a=2+Math.floor(Math.random()*(8+lv*6)), b=2+Math.floor(Math.random()*(8+lv*4));
+  if(lv===0||Math.random()<.5) return {text:`${a} + ${b}`, ans:a+b};
+  if(lv<2||Math.random()<.5){ const hi=Math.max(a,b),lo=Math.min(a,b); return {text:`${hi} − ${lo}`, ans:hi-lo}; }
+  return {text:`${a} × ${b}`, ans:a*b};
+}
+
+// ---- 落下する問題 ----
+const foes=[];
+function spawn(){
+  const q=makeQ();
+  const c=new PIXI.Container();
+  const body=new PIXI.Graphics();
+  // 反重力グローリング
+  for(let i=3;i>0;i--) body.beginFill(0xe57da9,.07*i).drawEllipse(0,10,52+(3-i)*8,14+(3-i)*4).endFill();
+  // 船体（二層の流線ハル）
+  body.beginFill(0xb95f8d).drawEllipse(0,6,46,13).endFill();
+  body.beginFill(0xe57da9);
+  body.moveTo(-44,2); body.bezierCurveTo(-30,-8,30,-8,44,2);
+  body.bezierCurveTo(30,10,-30,10,-44,2); body.closePath().endFill();
+  // ドームガラス＋中のインベーダー
+  body.beginFill(0xd6ecf7,.85);
+  body.moveTo(-19,-4); body.bezierCurveTo(-15,-26,15,-26,19,-4); body.closePath().endFill();
+  body.beginFill(0x2b2b3a).drawCircle(-5,-11,2.6).drawCircle(5,-11,2.6).endFill(); // 目
+  body.beginFill(0x2b2b3a).drawPolygon([-8,-18,-4,-13,-9,-13]).drawPolygon([8,-18,4,-13,9,-13]).endFill(); // ツノ
+  body.beginFill(0xffffff,.5).drawEllipse(-7,-17,5,2.5).endFill(); // ガラス反射
+  // ランプ列（明滅は回転で見せる）
+  for(let i=-2;i<=2;i++) body.beginFill(i%2?0xffdf5e:0x9fe7d9).drawCircle(i*17,7,3).endFill();
+  // 問題プレート（吊り下げ）
+  body.lineStyle(1.5,0xd6ecf7,.8).moveTo(-18,14).lineTo(-14,24).moveTo(18,14).lineTo(14,24); body.lineStyle(0);
+  body.beginFill(0x2b2b3a,.92).drawRoundedRect(-38,24,76,30,9).endFill();
+  body.lineStyle(1.5,0xe57da9,.9).drawRoundedRect(-38,24,76,30,9); body.lineStyle(0);
+  const t=new PIXI.Text(q.text,{fontSize:19,fill:0xffdf5e,fontWeight:'bold'});
+  t.anchor.set(.5); t.position.set(0,39);
+  c.addChild(body,t);
+  c.position.set(60+Math.random()*(W-120), -30);
+  app.stage.addChild(c);
+  foes.push({c,ans:q.ans,vy:.35+Math.min(1.2,score/300),wob:Math.random()*9});
+}
+let spawnT=0;
+
+// ---- 砲台（スバル講師の応援砲） ----
+const cannon=new PIXI.Graphics();
+// 台座（六角ベース＋装甲板）
+cannon.beginFill(0x2b3a55).drawPolygon([-32,4,-26,-12,26,-12,32,4]).endFill();
+cannon.beginFill(0x3d5170).drawPolygon([-24,-12,-18,-22,18,-22,24,-12]).endFill();
+cannon.lineStyle(1.5,0x9fd4ee,.6).moveTo(-24,-12).lineTo(24,-12); cannon.lineStyle(0);
+// 砲身（先細り＋冷却フィン）
+cannon.beginFill(0x5baedb);
+cannon.moveTo(-7,-22); cannon.bezierCurveTo(-6,-38,-4,-44,0,-46);
+cannon.bezierCurveTo(4,-44,6,-38,7,-22); cannon.closePath().endFill();
+for(let i=0;i<3;i++) cannon.beginFill(0x2b3a55,.8).drawRect(-6+i*1.2,-28-i*5,12-i*2.4,2).endFill();
+// エネルギーコア（発光）
+FXS.glowOrb(cannon,0xffdf5e,9,0xffffff,0,-16);
+// サイドスラスター
+cannon.beginFill(0x3d5170).drawRoundedRect(-30,-6,10,10,3).drawRoundedRect(20,-6,10,10,3).endFill();
+cannon.position.set(W/2,H-14);
+app.stage.addChild(cannon);
+
+// ---- パーティクル & 演出 ----
+const parts=[];
+function burst(x,y,color,n=16,spd=5){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*3.5).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1});
+    app.stage.addChild(g);
+  }
+}
+const lasers=[];
+let shake=0;
+const altText=document.getElementById('alt');
+
+// ---- 入力 ----
+const input=document.getElementById('answer');
+input.addEventListener('keydown',e=>{
+  if(!FX.playing||e.key!=='Enter'||input.value==='') return;
+  const v=parseInt(input.value,10); input.value='';
+  let hit=null,best=1e9;
+  for(const f of foes){ if(!f.dead && f.ans===v && f.c.y<best){ best=f.c.y; hit=f; } }
+  if(hit){
+    hit.dead=true;
+    // レーザー演出（正解=青系: 色の文法をCh5に従い固定）
+    const lz=new PIXI.Graphics();
+    lz.lineStyle(5,0x5baedb,1).moveTo(cannon.x,cannon.y-20).lineTo(hit.c.x,hit.c.y);
+    app.stage.addChild(lz); lasers.push({g:lz,life:.5});
+    burst(hit.c.x,hit.c.y,0x5baedb,20,6); burst(hit.c.x,hit.c.y,0xffdf5e,10,4);
+    score+=20; document.getElementById('score').textContent=score;
+    app.stage.removeChild(hit.c); shake=4;
+    // 高度更新
+    for(let i=ALT.length-1;i>=0;i--) if(score>=ALT[i].at){
+      if(altText.textContent!==ALT[i].name){ altText.textContent=ALT[i].name; }
+      level=i; break;
+    }
+  } else {
+    // 不正解=赤フラッシュ
+    burst(cannon.x,cannon.y-30,0xe57da9,10,3); shake=6;
+  }
+});
+
+app.ticker.add(dt=>{
+  if(!FX.playing) return;
+  spawnT-=dt;
+  if(spawnT<=0){ spawn(); spawnT=90-Math.min(50,score/10); }
+  for(const f of foes){
+    if(f.dead) continue;
+    f.wob+=dt*.05;
+    f.c.y+=f.vy*dt; f.c.x+=Math.sin(f.wob)*0.4*dt;
+    f.c.rotation=Math.sin(f.wob)*.08;
+    if(f.c.y>H-30){
+      f.dead=true; app.stage.removeChild(f.c);
+      life--; document.getElementById('life').textContent=life;
+      burst(f.c.x,H-24,0xe57da9,24,7); shake=10;
+      if(life<=0){
+        altText.textContent='ゲームオーバー';
+        FX.result({ title:'GAME OVER', lines:[`スコア: ${score}`,`到達高度: ${ALT[level].name}`] });
+      }
+    }
+  }
+  foes.splice(0,foes.length,...foes.filter(f=>!f.dead));
+  for(const p of parts){
+    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.1*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  for(const l of lasers){ l.life-=.04*dt; l.g.alpha=l.life*2; if(l.life<=0) app.stage.removeChild(l.g); }
+  lasers.splice(0,lasers.length,...lasers.filter(l=>l.life>0));
+  // 背景の高度遷移（ゆっくり補間）
+  bgTop=lerpColor(bgTop,ALT[level].top,.02*dt);
+  bgBot=lerpColor(bgBot,ALT[level].bot,.02*dt);
+  drawBG();
+  stars.alpha += ((level>=4?1:0)-stars.alpha)*.02*dt;
+  stars.children.forEach(s=>{ s.alpha=.4+Math.sin(performance.now()/700+s.a0)*.4; });
+  cannon.x += ((foes[0]?foes[0].c.x:W/2)-cannon.x)*.03*dt; // 砲台が最古の問題を見る
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: アヒルの叫び — マイク音量ギミックの検証</title>
+<style>
+  body { margin:0; background:#082f50; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#ffeca6; }
+  #info { font-size:12px; color:#83c2e2; margin-bottom:6px; text-align:center; line-height:1.6; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #hud { font-size:13px; margin:8px; display:flex; align-items:center; gap:12px; }
+  #vol { width:220px; height:14px; background:#0d1f33; border-radius:7px; overflow:hidden; border:1px solid #1169a3; }
+  #vol div { height:100%; width:0%; background:linear-gradient(90deg,#ffeca6,#83c2e2,#49afd3); transition:width .06s; }
+  button { padding:6px 18px; border:none; border-radius:16px; background:#49afd3; color:#04263e;
+           font-weight:bold; cursor:pointer; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🎤 アヒルの叫び PoC — ←→移動。<b>叫ぶと</b>ヒビ壁が壊れる／眠る敵の近くでは静かに</h1>
+<div id="info">検証: マイクdB計測→ゲームイベント・音波リング演出・「声はリスク」の両面設計<br>
+マイクなしでも <b>Xキー長押し=叫ぶ</b> で代替（アクセシビリティ・フォールバック）</div>
+<div id="hud"><button id="mic">🎙 マイクを有効化</button><div id="vol"><div></div></div><span id="msg"></span></div>
+<div id="stage"></div>
+<script>
+const W=880,H=400,GROUND=330;
+const app=new PIXI.Application({width:W,height:H,background:0x0d3a5c,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'アヒルの叫び', sub:'声がアビリティ — ←→移動、叫んで壁を壊せ（マイクなしはX長押し / Pでピクセル化）',
+  accent:0x83c2e2, accent2:0xffeca6, bloomThreshold:.5, bloomScale:1.1 });
+
+// 洞窟背景（霹靂パレット）
+const bg=new PIXI.Graphics();
+for(let i=0;i<16;i++) bg.beginFill(0x082f50,.5).drawEllipse(Math.random()*W,Math.random()*90, 60+Math.random()*70,26).endFill();
+bg.beginFill(0x1169a3).drawRect(0,GROUND,W,H-GROUND).endFill();
+bg.beginFill(0x49afd3,.4).drawRect(0,GROUND,W,5).endFill();
+app.stage.addChild(bg);
+
+// ヒビ壁（叫びで破壊）
+const wall=new PIXI.Container();
+const wg=new PIXI.Graphics();
+wg.beginFill(0x2a5b7d).drawRoundedRect(-24,-130,48,130,6).endFill();
+// レンガ目地（互い違い）
+wg.lineStyle(1.5,0x1c4560,.85);
+for(let by=-128;by<0;by+=16){
+  wg.moveTo(-24,by).lineTo(24,by);
+  const off=((by/16)%2===0)?-8:8;
+  wg.moveTo(off,by).lineTo(off,by+16);
+}
+// 大ヒビ（ジグザグ主線＋枝分かれ）
+wg.lineStyle(2.5,0x082f50);
+wg.moveTo(-6,-126).lineTo(4,-102).lineTo(-8,-78).lineTo(6,-56).lineTo(-2,-32).lineTo(8,-12);
+wg.lineStyle(1.2,0x082f50,.9);
+wg.moveTo(4,-102).lineTo(15,-90).moveTo(-8,-78).lineTo(-19,-66).moveTo(6,-56).lineTo(17,-44).moveTo(-2,-32).lineTo(-13,-24);
+wg.lineStyle(0);
+// 欠けた縁の破片
+wg.beginFill(0x1c4560).drawPolygon([-24,-130,-14,-130,-20,-122]).drawPolygon([24,-64,24,-52,17,-58]).endFill();
+wall.addChild(wg);
+wall.position.set(560,GROUND);
+app.stage.addChild(wall);
+let wallHP=100;
+const wallLabel=new PIXI.Text('ヒビ壁（叫びで破壊）',{fontSize:11,fill:0x83c2e2});
+wallLabel.anchor.set(.5); wallLabel.position.set(560,GROUND-146); app.stage.addChild(wallLabel);
+
+// 眠る敵
+const foe=new PIXI.Container();
+const fg=new PIXI.Graphics();
+fg.beginFill(0x000000,.2).drawEllipse(0,0,15,4).endFill();  // 影
+// 畳んだ翼（左右ベジェ）
+fg.beginFill(0x6d4787);
+fg.moveTo(-13,-24); fg.bezierCurveTo(-31,-19,-33,-2,-20,-4);
+fg.quadraticCurveTo(-27,-11,-13,-17); fg.closePath();
+fg.moveTo(13,-24); fg.bezierCurveTo(31,-19,33,-2,20,-4);
+fg.quadraticCurveTo(27,-11,13,-17); fg.closePath().endFill();
+// 胴（ふさふさブロブ）
+FXS.blob(fg,0x8a5fa5,17,10,.3,33,1,0,-15);
+FXS.blob(fg,0xa47cc0,8,8,.4,34,.5,-4,-20);
+// 耳
+fg.beginFill(0x8a5fa5).drawPolygon([-9,-27,-14,-40,-3,-29]).drawPolygon([9,-27,14,-40,3,-29]).endFill();
+fg.beginFill(0x082f50,.4).drawPolygon([-8,-29,-11,-35,-5,-30]).drawPolygon([8,-29,11,-35,5,-30]).endFill();
+// 閉じ目（すやすやカーブ）＋牙
+fg.lineStyle(2,0x082f50).moveTo(-9,-17).quadraticCurveTo(-6,-14,-3,-17)
+  .moveTo(3,-17).quadraticCurveTo(6,-14,9,-17); fg.lineStyle(0);
+fg.beginFill(0xffffff).drawPolygon([-3,-10,-1,-6,1,-10]).endFill();
+foe.addChild(fg);
+const zzz=new PIXI.Text('💤',{fontSize:16}); zzz.position.set(14,-44); foe.addChild(zzz);
+foe.position.set(330,GROUND);
+app.stage.addChild(foe);
+let foeAwake=0; // 0=眠り 1=起きて追跡
+
+// アヒル（プレイヤー）
+const duck=new PIXI.Container();
+const db=new PIXI.Graphics();
+db.beginFill(0x000000,.2).drawEllipse(0,0,13,3.5).endFill();  // 影
+// 尾羽（2枚ベジェ）
+for(let i=0;i<2;i++){
+  const a=Math.PI*(.84+i*.12);
+  db.beginFill(0xffeca6,.9-i*.2);
+  db.moveTo(-11,-10);
+  db.bezierCurveTo(-11+Math.cos(a)*13,-14+Math.sin(a)*8, -11+Math.cos(a)*24,-10+Math.sin(a)*14, -11+Math.cos(a)*19,-10+Math.sin(a)*5);
+  db.quadraticCurveTo(-13,-11,-11,-10); db.closePath().endFill();
+}
+// 体（洋ナシ型）
+db.beginFill(0xffeca6);
+db.moveTo(-14,-16); db.bezierCurveTo(-19,-5,-8,2,3,1);
+db.bezierCurveTo(14,0,17,-8,12,-16); db.bezierCurveTo(7,-23,-8,-23,-14,-16);
+db.closePath().endFill();
+db.beginFill(0xffffff,.35);
+db.moveTo(-9,-8); db.quadraticCurveTo(0,1,9,-6); db.quadraticCurveTo(0,-4,-9,-8); db.closePath().endFill();
+// 翼シェード
+db.beginFill(0x000000,.13);
+db.moveTo(-3,-13); db.bezierCurveTo(4,-18,10,-12,5,-7); db.bezierCurveTo(0,-4,-6,-9,-3,-13); db.closePath().endFill();
+// 頭・くちばし（開き気味＝叫ぶ準備）
+db.beginFill(0xffeca6).drawCircle(9,-26,8.5).endFill();
+db.beginFill(0xffffff,.3).drawEllipse(7,-30,4,2.4).endFill();
+db.beginFill(0xe07b24);
+db.moveTo(16,-28); db.quadraticCurveTo(26,-28,28,-25); db.quadraticCurveTo(22,-23,16,-24); db.closePath();
+db.moveTo(16,-24); db.quadraticCurveTo(23,-22,25,-20); db.quadraticCurveTo(20,-18,16,-20); db.closePath().endFill();
+// 目・頬
+db.beginFill(0x082f50).drawCircle(11,-28,2).endFill();
+db.beginFill(0xffffff).drawCircle(11.7,-28.7,.8).endFill();
+db.beginFill(0xf4a26b,.7).drawEllipse(13,-22,2.4,1.6).endFill();
+duck.addChild(db);
+duck.position.set(80,GROUND);
+app.stage.addChild(duck);
+const P={x:80,face:1};
+
+// 音波リング
+const rings=[];
+function ring(x,y,power){
+  const g=new PIXI.Graphics(); g.position.set(x,y); app.stage.addChild(g);
+  rings.push({g,r:8,max:40+power*2.2,alpha:1,
+    color: power>60?0x49afd3:(power>30?0x83c2e2:0xffeca6)});
+}
+const parts=[];
+function burst(x,y,color,n=16,spd=5){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*4).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:1});
+    app.stage.addChild(g);
+  }
+}
+
+// ---- マイク入力（フォールバック: Xキー） ----
+let vol=0, micOn=false, analyser, dataArr;
+document.getElementById('mic').onclick=async()=>{
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const ctx=new AudioContext();
+    const src=ctx.createMediaStreamSource(stream);
+    analyser=ctx.createAnalyser(); analyser.fftSize=512;
+    dataArr=new Uint8Array(analyser.frequencyBinCount);
+    src.connect(analyser);
+    micOn=true;
+    document.getElementById('mic').textContent='🎙 マイクON';
+    document.getElementById('msg').textContent='声を出してみよう！';
+  }catch(e){
+    document.getElementById('msg').textContent='マイク不可 → Xキーで叫ぼう';
+  }
+};
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+
+let shake=0, cleared=false, shoutCd=0;
+app.ticker.add(dt=>{
+  if(!FX.playing) return;
+  // 音量計測
+  if(micOn){
+    analyser.getByteFrequencyData(dataArr);
+    let sum=0; for(const v of dataArr) sum+=v*v;
+    const rms=Math.sqrt(sum/dataArr.length);
+    vol += (Math.min(100,rms*1.1)-vol)*.3*dt;
+  } else {
+    vol += ((keys['KeyX']?85:0)-vol)*.15*dt;
+  }
+  document.querySelector('#vol div').style.width=vol+'%';
+
+  // 移動
+  const dir=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);
+  if(dir){ P.face=dir; P.x=Math.max(30,Math.min(W-30,P.x+dir*2.6*dt)); }
+  duck.scale.x=P.face;
+  duck.position.set(P.x, GROUND + (dir?Math.abs(Math.sin(performance.now()/80))*-4:0));
+  // 叫び=音波リング発生
+  shoutCd-=dt;
+  if(vol>25 && shoutCd<=0){
+    ring(P.x,GROUND-24,vol); shoutCd=8;
+    duck.scale.set(P.face*(1+vol*.004),1+vol*.004);
+  }
+  // 壁破壊判定（大声＋近距離）
+  if(vol>55 && Math.abs(P.x-560)<170 && wallHP>0){
+    wallHP-=(vol-50)*.06*dt;
+    wall.position.x=560+(Math.random()-.5)*4;
+    if(wallHP<=0){
+      burst(560,GROUND-60,0x2a5b7d,30,7); shake=10;
+      wall.visible=false; wallLabel.text='突破！';
+      if(!cleared){
+        cleared=true;
+        document.getElementById('msg').textContent='🎉 叫びで壁を破壊！';
+        setTimeout(()=>FX.result({ title:'新エリア発見！', lines:['叫び（声量）が探索の鍵になった','本実装ではここからマップが開いていく'] }), 800);
+      }
+    }
+  }
+  // 敵: 音に反応（声はリスク）
+  const nearFoe=Math.abs(P.x-330)<200;
+  if(vol>40 && nearFoe && foeAwake<1){
+    foeAwake=1; zzz.text='❗';
+    document.getElementById('msg').textContent='⚠ 叫び声で敵が起きた！ 距離を取れ！';
+  }
+  if(foeAwake>=1 && wallHP>0){
+    const d=P.x-foe.x;
+    foe.x+=Math.sign(d)*1.4*dt;
+    foe.rotation=Math.sin(performance.now()/100)*.15;
+    if(Math.abs(d)<26){
+      // 捕まる→リスポーン
+      P.x=80; foe.x=330; foeAwake=0; zzz.text='💤'; shake=10;
+      document.getElementById('msg').textContent='😵 捕まった… 敵の近くでは静かに（囁きステルス）';
+    }
+    if(Math.abs(d)>320){ foeAwake=0; zzz.text='💤'; }
+  }
+  foe.y=GROUND+Math.sin(performance.now()/600)*2;
+  // リング更新
+  for(const r of rings){
+    r.r+=3.4*dt; r.alpha-=.03*dt;
+    r.g.clear();
+    r.g.lineStyle(3,r.color,Math.max(0,r.alpha)).drawCircle(0,0,r.r);
+    r.g.lineStyle(1.5,0xffffff,Math.max(0,r.alpha*.5)).drawCircle(0,0,r.r*.7);
+    if(r.alpha<=0) app.stage.removeChild(r.g);
+  }
+  rings.splice(0,rings.length,...rings.filter(r=>r.alpha>0));
+  for(const p of parts){
+    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.15*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  duck.scale.y+=(1-duck.scale.y)*.1*dt;
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

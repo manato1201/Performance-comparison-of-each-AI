@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: スイーパー — 視界コーンと捕食ステルスの検証</title>
+<style>
+  body { margin:0; background:#0a224b; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#e2d0c6; }
+  #info { font-size:12px; color:#72818c; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#e2d0c6; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🕷️ スイーパー PoC — 矢印キーで移動。住人の視界を避けて羽虫を捕食せよ</h1>
+<div id="info">検証: 巡回AI＋視界コーン・Boids羽虫・警戒ステート（平常→違和感→駆除）・糸の軌跡</div>
+<div id="stage"></div>
+<div id="hud">捕食: <b id="eat">0</b> / 8　状態: <b id="state">潜伏中</b></div>
+<script>
+const W=880,H=460;
+const app=new PIXI.Application({width:W,height:H,background:0x2d366a,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'スイーパー', sub:'益虫ステルス — 矢印キーで移動、視界を避けて羽虫を捕食（Pでピクセル化）',
+  accent:0xffeca6, accent2:0x487589, bloomThreshold:.55 });
+
+// ---- 部屋（終夜パレット） ----
+const room=new PIXI.Graphics();
+room.beginFill(0x487589).drawRect(30,30,W-60,H-60).endFill();          // 床
+room.beginFill(0x00516c).drawRect(30,30,W-60,14).endFill();            // 奥壁影
+// 家具（隠れ場所=深い影）
+const covers=[{x:90,y:90,w:150,h:80},{x:600,y:70,w:180,h:90},{x:140,y:300,w:120,h:100},{x:560,y:290,w:200,h:110}];
+for(const c of covers){
+  room.beginFill(0x0a224b).drawRoundedRect(c.x,c.y,c.w,c.h,10).endFill();
+  room.beginFill(0x2d366a).drawRoundedRect(c.x+6,c.y+6,c.w-12,10,5).endFill();
+}
+app.stage.addChild(room);
+const coverLabel=new PIXI.Text('■ = 家具の影（隠れると見つからない）',{fontSize:11,fill:0x72818c});
+coverLabel.position.set(34,H-26); app.stage.addChild(coverLabel);
+function inCover(x,y){ return covers.some(c=>x>c.x&&x<c.x+c.w&&y>c.y&&y<c.y+c.h); }
+
+// ---- 蜘蛛（プレイヤー） ----
+const spider=new PIXI.Container();
+const spBody=new PIXI.Graphics();
+// 脚8本（関節つきベジェ・左右4対）
+for(let i=0;i<4;i++){
+  const ly=-12+i*6, reach=15+(i===0||i===3?3:6);
+  FXS.limb(spBody,0x0a224b,2.2, 0,-4, -reach,ly-8, -reach-4,ly+5);
+  FXS.limb(spBody,0x0a224b,2.2, 0,-4,  reach,ly-8,  reach+4,ly+5);
+}
+// 腹部（雫型ベジェ＋模様）
+spBody.beginFill(0x13315c);
+spBody.moveTo(0,-8); spBody.bezierCurveTo(11,-6,13,9,0,15);
+spBody.bezierCurveTo(-13,9,-11,-6,0,-8); spBody.closePath().endFill();
+spBody.beginFill(0xc65244).drawPolygon([0,-3,4.5,4,0,11,-4.5,4]).endFill();   // 背の紋（菱）
+spBody.beginFill(0xe2d0c6,.6).drawCircle(-4.5,1,1.3).drawCircle(4.5,1,1.3).drawCircle(0,-4.5,1.1).endFill();
+// 頭胸部＋牙
+spBody.beginFill(0x0a224b).drawEllipse(0,-13,6.5,6).endFill();
+spBody.beginFill(0x0a224b).drawPolygon([-3,-18,-1.5,-22,-.5,-18]).drawPolygon([3,-18,1.5,-22,.5,-18]).endFill();
+// 光る4眼
+spBody.beginFill(0x83c2e2).drawCircle(-2.5,-15,1.3).drawCircle(2.5,-15,1.3).endFill();
+spBody.beginFill(0x83c2e2,.7).drawCircle(-4.6,-13,.8).drawCircle(4.6,-13,.8).endFill();
+spider.addChild(spBody);
+spider.position.set(120,130);
+const S={x:120,y:130,vx:0,vy:0};
+// 糸の軌跡
+const trail=new PIXI.Graphics(); app.stage.addChild(trail);
+const trailPts=[];
+app.stage.addChild(spider);
+
+// ---- 住人（巡回＋視界コーン） ----
+const WAYPOINTS=[[440,120],[760,230],[440,400],[110,230]];
+const resident=new PIXI.Container();
+const rb=new PIXI.Graphics();
+// 体（なで肩のベジェシルエット・部屋着）
+rb.beginFill(0x72818c);
+rb.moveTo(-16,22); rb.bezierCurveTo(-18,-8,-10,-17,0,-17);
+rb.bezierCurveTo(10,-17,18,-8,16,22); rb.closePath().endFill();
+rb.beginFill(0x5d6a76).drawRect(-16,14,32,8).endFill();   // 裾の影
+// 腕（ベジェ・右手はスリッパ持ち）
+FXS.limb(rb,0x72818c,7, -13,-8, -23,2, -20,15);
+FXS.limb(rb,0x72818c,7,  13,-8,  24,0,  22,12);
+rb.beginFill(0xc65244).drawRoundedRect(17,8,11,20,5).endFill();      // スリッパ（凶器）
+rb.beginFill(0x9a3a30).drawRoundedRect(17,8,11,7,4).endFill();
+// 頭＋髪（ベジェ前髪）
+rb.beginFill(0xe2d0c6).drawCircle(0,-30,13).endFill();
+rb.beginFill(0x3a3f4a);
+rb.moveTo(-13,-32); rb.bezierCurveTo(-12,-47,12,-47,13,-32);
+rb.quadraticCurveTo(7,-39,2,-35); rb.quadraticCurveTo(-2,-40,-7,-35);
+rb.quadraticCurveTo(-10,-38,-13,-32); rb.closePath().endFill();
+// 目（ジト目＝敵意）
+rb.lineStyle(2,0x3a3f4a).moveTo(-8,-28).lineTo(-3,-28).moveTo(3,-28).lineTo(8,-28); rb.lineStyle(0);
+resident.addChild(rb);
+app.stage.addChild(resident);
+const cone=new PIXI.Graphics(); app.stage.addChildAt(cone, app.stage.getChildIndex(resident));
+const R={x:440,y:120,wp:1,angle:0,alert:0}; // alert: 0平常 →1駆除
+
+// ---- 羽虫（Boids簡易） ----
+const flies=[]; let eaten=0;
+for(let i=0;i<8;i++){
+  const g=new PIXI.Graphics();
+  g.beginFill(0xf6bfbb).drawCircle(0,0,4).endFill();
+  g.beginFill(0xffffff,.7).drawEllipse(-4,-3,3,2).drawEllipse(4,-3,3,2).endFill();
+  g.position.set(200+Math.random()*500, 100+Math.random()*250);
+  app.stage.addChild(g);
+  flies.push({g,x:g.x,y:g.y,vx:0,vy:0});
+}
+
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+const stateEl=document.getElementById('state');
+let shake=0, caught=false;
+
+app.ticker.add(dt=>{
+  if(!FX.playing||caught) return;
+  // 蜘蛛移動
+  S.vx=((keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0))*3;
+  S.vy=((keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0))*3;
+  S.x=Math.max(40,Math.min(W-40,S.x+S.vx*dt));
+  S.y=Math.max(50,Math.min(H-40,S.y+S.vy*dt));
+  spider.position.set(S.x,S.y);
+  spider.rotation = S.vx||S.vy ? Math.atan2(S.vy,S.vx)+Math.PI/2 : spider.rotation;
+  spider.scale.set(1+Math.sin(performance.now()/90)*(S.vx||S.vy?.06:0)); // 歩行の脈動
+  // 糸の軌跡
+  trailPts.push({x:S.x,y:S.y,life:1});
+  trail.clear(); trail.lineStyle(1.5,0xe2d0c6,.5);
+  for(let i=1;i<trailPts.length;i++){
+    trail.moveTo(trailPts[i-1].x,trailPts[i-1].y).lineTo(trailPts[i].x,trailPts[i].y);
+  }
+  for(const t of trailPts) t.life-=.008*dt;
+  while(trailPts.length&&trailPts[0].life<=0) trailPts.shift();
+
+  // 住人巡回
+  const wp=WAYPOINTS[R.wp];
+  const dx=wp[0]-R.x, dy=wp[1]-R.y, d=Math.hypot(dx,dy);
+  const speed = R.alert>0 ? 2.6 : 1.2;
+  if(d<8) R.wp=(R.wp+1)%WAYPOINTS.length;
+  else { R.x+=dx/d*speed*dt; R.y+=dy/d*speed*dt; R.angle=Math.atan2(dy,dx); }
+  // 駆除モード: 蜘蛛に向かう
+  if(R.alert>0){
+    const px=S.x-R.x, py=S.y-R.y, pd=Math.hypot(px,py);
+    R.x+=px/pd*2.8*dt; R.y+=py/pd*2.8*dt; R.angle=Math.atan2(py,px);
+    R.alert-=.003*dt;
+    if(R.alert<=0){ stateEl.textContent='潜伏中'; }
+    if(pd<26 && !inCover(S.x,S.y)){
+      caught=true; stateEl.textContent='スリッパで叩かれた…'; shake=14;
+      FX.result({ title:'駆除された…', lines:[`捕食数: ${eaten} / 8`,'家具の影に隠れれば見つからない'] });
+    }
+  }
+  resident.position.set(R.x,R.y);
+  resident.rotation=Math.sin(performance.now()/200)*.05;
+
+  // 視界コーン（グラデ描画）と発見判定
+  cone.clear();
+  const FOV=.55, RANGE=190;
+  for(let i=3;i>0;i--){
+    cone.beginFill(R.alert>0?0xc65244:0xffeca6, .05*i)
+      .moveTo(R.x,R.y)
+      .arc(R.x,R.y,RANGE*i/3,R.angle-FOV,R.angle+FOV)
+      .lineTo(R.x,R.y).endFill();
+  }
+  const ang=Math.atan2(S.y-R.y,S.x-R.x);
+  let diff=Math.abs(ang-R.angle); diff=Math.min(diff,Math.PI*2-diff);
+  const seen = diff<FOV && Math.hypot(S.x-R.x,S.y-R.y)<RANGE && !inCover(S.x,S.y);
+  if(seen && R.alert<=0){ R.alert=1; stateEl.textContent='⚠ 見つかった！ 駆除モード'; shake=8; }
+
+  // 羽虫 Boids-lite + 捕食
+  for(const f of flies){
+    if(f.dead) continue;
+    f.vx+=(Math.random()-.5)*.5*dt; f.vy+=(Math.random()-.5)*.5*dt;
+    // 蜘蛛から逃げる
+    const fx=f.x-S.x, fy=f.y-S.y, fd=Math.hypot(fx,fy);
+    if(fd<70){ f.vx+=fx/fd*.4*dt; f.vy+=fy/fd*.4*dt; }
+    f.vx*=Math.pow(.95,dt); f.vy*=Math.pow(.95,dt);
+    f.x=Math.max(50,Math.min(W-50,f.x+f.vx*dt));
+    f.y=Math.max(60,Math.min(H-50,f.y+f.vy*dt));
+    f.g.position.set(f.x,f.y);
+    f.g.scale.y=1+Math.sin(performance.now()/40)*.3; // 羽ばたき
+    if(fd<16){
+      f.dead=true; app.stage.removeChild(f.g);
+      eaten++; document.getElementById('eat').textContent=eaten;
+      // 捕食エフェクト
+      for(let i=0;i<10;i++){
+        const g=new PIXI.Graphics(); g.beginFill(0xf6bfbb).drawCircle(0,0,2).endFill();
+        g.position.set(f.x,f.y); app.stage.addChild(g);
+        const a=Math.random()*Math.PI*2;
+        const pt={g,vx:Math.cos(a)*3,vy:Math.sin(a)*3,life:1};
+        const iv=setInterval(()=>{ pt.g.x+=pt.vx; pt.g.y+=pt.vy; pt.life-=.06; pt.g.alpha=pt.life;
+          if(pt.life<=0){ app.stage.removeChild(pt.g); clearInterval(iv);} },16);
+      }
+      spider.scale.set(1.5); // ごくん
+      if(eaten>=8){
+        stateEl.textContent='🎉 全害虫を駆逐！';
+        FX.result({ title:'MISSION COMPLETE', lines:['全害虫を駆逐した','見つからずに任務完了 — 益虫の誇り'] });
+      }
+    }
+  }
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

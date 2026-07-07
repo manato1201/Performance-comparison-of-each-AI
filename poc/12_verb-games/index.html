@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: Let'sDoThis — 行動＝彩度＝生命の検証（動詞ゲーム集）</title>
+<style>
+  body { margin:0; background:#1a1a1a; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#e99aad; }
+  #info { font-size:12px; color:#999; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.6); }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#e99aad; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🎨 Let'sDoThis PoC — 矢印キーで動き続けろ。同じ動きは飽きる。止まれば世界が色を失う</h1>
+<div id="info">動詞ゲーム集より。検証: 刺激値→ColorMatrix彩度の直結・「違う行動」判定・色の花火（百花繚乱）</div>
+<div id="stage"></div>
+<div id="hud">刺激: <b id="stim">50</b>%　生存: <b id="time">0</b>秒　<span id="msg">何もしないのは、緩やかな自殺</span></div>
+<script>
+const W=880,H=440;
+const app=new PIXI.Application({width:W,height:H,background:0x14141c,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+
+// 全体彩度フィルタ（刺激値と直結）
+const cm=new PIXI.ColorMatrixFilter();
+app.stage.filters=[cm];
+FX.attach(app, { title:"Let'sDoThis", sub:'動詞ゲーム集 — 動き続けろ。同じ動きは飽きる。止まれば色を失う（Pでピクセル化）',
+  accent:0xe99aad, accent2:0xd70056, bloomThreshold:.6 });
+
+// 百花繚乱パレット
+const COLORS=[0xffdd3f,0xea903a,0xe99aad,0xd70056,0xa06aa5,0x7fa77b,0x5baedb,0x67c1af];
+
+// 床グリッド（動いた場所に色が咲く）
+const gridG=new PIXI.Graphics(); app.stage.addChild(gridG);
+const CELLS=22, CW=W/CELLS, CH=H/11;
+const painted={}; // key -> {color, life}
+
+// 花オーブ（取ると刺激大＋色の花火）
+const orbs=[];
+function spawnOrb(){
+  const g=new PIXI.Graphics();
+  const col=COLORS[Math.floor(Math.random()*COLORS.length)];
+  for(let i=0;i<6;i++){
+    const a=i/6*Math.PI*2;
+    g.beginFill(col).drawEllipse(Math.cos(a)*8,Math.sin(a)*8,6,3.5).endFill();
+  }
+  g.beginFill(0xffffff).drawCircle(0,0,4).endFill();
+  g.position.set(60+Math.random()*(W-120),60+Math.random()*(H-120));
+  app.stage.addChild(g);
+  orbs.push({g,col,t:Math.random()*9});
+}
+for(let i=0;i<4;i++) spawnOrb();
+
+// プレイヤー
+const player=new PIXI.Graphics();
+// 彗星コア（多層グロー＋雫テール）
+FXS.glowOrb(player,0xffffff,12,0xfff8dc);
+player.beginFill(0xffffff,.35);
+player.moveTo(-6,-7); player.bezierCurveTo(-18,-4,-22,4,-8,8);
+player.quadraticCurveTo(-13,2,-6,-7); player.closePath().endFill();
+player.beginFill(0x14141c).drawCircle(-2.5,-2,2).drawCircle(4.5,-2,2).endFill();
+player.beginFill(0xffffff).drawCircle(-1.9,-2.6,.7).drawCircle(5.1,-2.6,.7).endFill();
+player.position.set(W/2,H/2);
+app.stage.addChild(player);
+const P={x:W/2,y:H/2};
+
+// 残像
+const ghosts=[];
+
+let stim=50, alive=true, elapsed=0, lastDir='', dirRepeat=0, shake=0;
+const parts=[];
+function burst(x,y,color,n=18,spd=5){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,2+Math.random()*4).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1});
+    app.stage.addChild(g);
+  }
+}
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+setInterval(()=>{ if(alive&&FX.playing){ elapsed++; document.getElementById('time').textContent=elapsed; } },1000);
+
+app.ticker.add(dt=>{
+  if(!FX.playing||!alive) return;
+  // 入力と「違う行動」判定
+  let dx=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);
+  let dy=(keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0);
+  const dir=`${dx},${dy}`;
+  if(dx||dy){
+    if(dir===lastDir){ dirRepeat+=dt; }
+    else { dirRepeat=0; stim+=3.5; } // 違う行動＝大きな刺激
+    lastDir=dir;
+    stim += Math.max(.02, .3-dirRepeat*.004)*dt; // 同じ行動は逓減（飽き）
+    P.x=Math.max(16,Math.min(W-16,P.x+dx*3.4*dt));
+    P.y=Math.max(16,Math.min(H-16,P.y+dy*3.4*dt));
+    // 足元に色が咲く
+    const k=`${Math.floor(P.x/CW)},${Math.floor(P.y/CH)}`;
+    painted[k]={color:COLORS[(Math.floor(P.x/CW)+Math.floor(P.y/CH))%COLORS.length],life:1};
+    // 残像
+    if(Math.random()<.5*dt){
+      const g=new PIXI.Graphics();
+      g.beginFill(0xffffff,.4).drawCircle(0,0,9).endFill();
+      g.position.set(P.x,P.y); app.stage.addChild(g);
+      ghosts.push({g,life:.7});
+    }
+  }
+  stim-=.22*dt;               // 無行動の減衰
+  stim=Math.max(0,Math.min(100,stim));
+  document.getElementById('stim').textContent=Math.floor(stim);
+  player.position.set(P.x,P.y);
+  player.scale.set(1+Math.sin(performance.now()/140)*.06);
+
+  // オーブ取得
+  for(const o of orbs){
+    o.t+=dt*.05; o.g.rotation+=.02*dt;
+    o.g.y+=Math.sin(o.t*3)*.2*dt;
+    if(Math.hypot(P.x-o.g.x,P.y-o.g.y)<22){
+      stim=Math.min(100,stim+18);
+      burst(o.g.x,o.g.y,o.col,26,6); shake=5;
+      // 周囲のセルにも色が咲き広がる
+      const cx=Math.floor(o.g.x/CW), cy=Math.floor(o.g.y/CH);
+      for(let ix=-2;ix<=2;ix++)for(let iy=-2;iy<=2;iy++)
+        painted[`${cx+ix},${cy+iy}`]={color:o.col,life:1};
+      o.g.position.set(60+Math.random()*(W-120),60+Math.random()*(H-120));
+      document.getElementById('msg').textContent='鮮やかさが戻る…！';
+    }
+  }
+  // 塗りセル描画（刺激値でフェード）
+  gridG.clear();
+  for(const k in painted){
+    const c=painted[k];
+    c.life-=.0012*dt;
+    if(c.life<=0){ delete painted[k]; continue; }
+    const [gx,gy]=k.split(',').map(Number);
+    gridG.beginFill(c.color,.35*c.life).drawRect(gx*CW+1,gy*CH+1,CW-2,CH-2).endFill();
+  }
+  // 残像・パーティクル
+  for(const g of ghosts){ g.life-=.04*dt; g.g.alpha=g.life; g.g.scale.set(1+(0.7-g.life)); if(g.life<=0) app.stage.removeChild(g.g); }
+  ghosts.splice(0,ghosts.length,...ghosts.filter(g=>g.life>0));
+  for(const p of parts){
+    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.025*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  // 彩度=刺激（核となる演出）
+  cm.reset(); cm.saturate((stim-50)/50, false);
+  if(stim<25) document.getElementById('msg').textContent='…世界がモノクロになっていく';
+  if(stim<=0){
+    alive=false;
+    cm.reset(); cm.saturate(-1,false); cm.brightness(.4,true);
+    document.getElementById('msg').innerHTML='<b>暗転。</b>';
+    FX.result({ title:'暗転。', lines:[`生存 ${elapsed}秒`,'何もしないのは、緩やかな自殺だった'] });
+  }
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

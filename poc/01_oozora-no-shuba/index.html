@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>PoC: 大空のしゅばぁ — 啄みコピーの検証</title>
+<style>
+  body { margin:0; background:#1a6b6e; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#ffe46d; }
+  #info { font-size:12px; color:#bfe3e0; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); }
+  #hud { font-size:13px; margin:8px 0; }
+  #hud b { color:#ffe46d; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+</head>
+<body>
+<h1>🦆 大空のしゅばぁ PoC — ←→移動 / ↑ジャンプ / Z攻撃 / V啄み（敵を喰らって能力コピー）</h1>
+<div id="info">パレット: 花鳥風月（kotonoha_sai）／ 検証: コピー能力のデータ駆動・吸い込み演出・ジュース</div>
+<div id="stage"></div>
+<div id="hud">コピー: <b id="copy">なし</b>　撃破: <b id="kill">0</b></div>
+<script>
+const W=880, H=460;
+const app = new PIXI.Application({ width:W, height:H, background:0x2e9ea2, antialias:true });
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app, { title:'大空のしゅばぁ', sub:'コピー能力アクション — ←→↑移動 / Z攻撃 / V啄み（Pでピクセル化）',
+  accent:0xffe46d, accent2:0x2e9ea2, bloomThreshold:.6 });
+
+// ---- パララックス背景（花鳥風月） ----
+const bg = new PIXI.Container(); app.stage.addChild(bg);
+function hills(color, amp, yBase, speed){
+  const g = new PIXI.Graphics(); g.beginFill(color);
+  g.moveTo(0,H);
+  for(let x=0;x<=W*2;x+=20) g.lineTo(x, yBase + Math.sin(x*.008)*amp + Math.sin(x*.021)*amp*.5);
+  g.lineTo(W*2,H); g.endFill(); bg.addChild(g);
+  return {g, speed};
+}
+const layers=[hills(0x95c0b9,26,300,.15), hills(0x64a89b,34,340,.35), hills(0x3e8e85,30,390,.7)];
+for(let i=0;i<14;i++){ // 花
+  const f=new PIXI.Graphics();
+  f.beginFill([0xf8ccd1,0xffe46d,0xe4969e][i%3]).drawCircle(0,0,4).endFill();
+  f.position.set(Math.random()*W, 300+Math.random()*140); f.alpha=.8; bg.addChild(f);
+}
+
+// ---- ワールド ----
+const world = new PIXI.Container(); app.stage.addChild(world);
+const GROUND = 410;
+const plats = [{x:0,y:GROUND,w:W,h:50},{x:250,y:330,w:150,h:16},{x:520,y:280,w:150,h:16},{x:700,y:360,w:120,h:16}];
+for(const p of plats){
+  const g=new PIXI.Graphics();
+  g.beginFill(0x1a6b6e).drawRoundedRect(0,0,p.w,p.h,6).endFill();
+  g.beginFill(0x64ba6d).drawRoundedRect(0,0,p.w,6,3).endFill();
+  g.position.set(p.x,p.y); world.addChild(g);
+}
+
+// ---- パーティクル ----
+const parts=[];
+function burst(x,y,color,n=14,spd=4){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics(); g.beginFill(color).drawCircle(0,0,2+Math.random()*3).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2, s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:1});
+    world.addChild(g);
+  }
+}
+let shake=0;
+
+// ---- コピー能力データ（データ駆動の検証） ----
+const ABILITIES = {
+  none:    { label:'なし', color:0xffe46d, shot:null },
+  bomber:  { label:'ボマー(SSRB)', color:0xd08907, shot:{type:'lob', color:0xd08907} },
+  blizzard:{ label:'ブリザード(雪民)', color:0xcfeef2, shot:{type:'straight', color:0xcfeef2, freeze:true} },
+  fighter: { label:'ファイター(35P)', color:0xe4969e, shot:{type:'dash', color:0xe4969e} },
+};
+
+// ---- プレイヤー（アヒル） ----
+const duck = new PIXI.Container();
+const duckBody = new PIXI.Graphics();
+function drawDuck(color){
+  duckBody.clear();
+  // 尾羽（3枚のベジェ羽根）
+  for(let i=0;i<3;i++){
+    const a=Math.PI*(.82+i*.10);
+    duckBody.beginFill(color,.85-i*.15);
+    duckBody.moveTo(-14,-2);
+    duckBody.bezierCurveTo(-14+Math.cos(a)*16, -8+Math.sin(a)*10,
+                           -14+Math.cos(a)*30, -2+Math.sin(a)*18,
+                           -14+Math.cos(a)*24, -2+Math.sin(a)*6);
+    duckBody.quadraticCurveTo(-16,-4,-14,-2);
+    duckBody.closePath().endFill();
+  }
+  // 体（洋ナシ型ベジェ）
+  duckBody.beginFill(color);
+  duckBody.moveTo(-18,-6);
+  duckBody.bezierCurveTo(-24,8, -10,17, 4,15);
+  duckBody.bezierCurveTo(18,13, 22,2, 16,-8);
+  duckBody.bezierCurveTo(10,-16, -10,-16, -18,-6);
+  duckBody.closePath().endFill();
+  // 腹のハイライト
+  duckBody.beginFill(0xffffff,.3);
+  duckBody.moveTo(-12,4); duckBody.quadraticCurveTo(0,16,12,8);
+  duckBody.quadraticCurveTo(0,9,-12,4); duckBody.closePath().endFill();
+  // 翼（葉形シェード）
+  duckBody.beginFill(0x000000,.15);
+  duckBody.moveTo(-4,-4);
+  duckBody.bezierCurveTo(6,-11,15,-2,8,6);
+  duckBody.bezierCurveTo(1,11,-7,4,-4,-4);
+  duckBody.closePath().endFill();
+  // 頭＋ハイライト
+  duckBody.beginFill(color).drawCircle(12,-18,11).endFill();
+  duckBody.beginFill(0xffffff,.3).drawEllipse(9,-23,5,3).endFill();
+  // くちばし（上下2枚）
+  duckBody.beginFill(0xe07b24);
+  duckBody.moveTo(21,-20); duckBody.quadraticCurveTo(33,-19,35,-15);
+  duckBody.quadraticCurveTo(28,-13,21,-15); duckBody.closePath().endFill();
+  duckBody.beginFill(0xd08907);
+  duckBody.moveTo(21,-15); duckBody.quadraticCurveTo(29,-13,31,-11);
+  duckBody.quadraticCurveTo(25,-9,21,-11); duckBody.closePath().endFill();
+  // 目・頬
+  duckBody.beginFill(0x09397a).drawCircle(15,-21,2.6).endFill();
+  duckBody.beginFill(0xffffff).drawCircle(15.9,-21.9,1).endFill();
+  duckBody.beginFill(0xf8ccd1,.8).drawEllipse(18,-14,3,2).endFill();
+  // 足ひれ
+  duckBody.beginFill(0xe07b24).drawPolygon([-6,14,-2,21,2,14]).drawPolygon([4,14,8,21,12,14]).endFill();
+}
+drawDuck(0xffe46d);
+duck.addChild(duckBody);
+duck.position.set(80, GROUND);
+world.addChild(duck);
+const P={x:80,y:GROUND,vx:0,vy:0,onGround:true,face:1,copy:'none',sq:1};
+
+// ---- 敵 ----
+const enemies=[];
+function spawnEnemy(){
+  const kinds=[['bomber',0xd08907],['blizzard',0xcfeef2],['fighter',0xe4969e]];
+  const [kind,color]=kinds[Math.floor(Math.random()*3)];
+  const g=new PIXI.Container();
+  const b=new PIXI.Graphics();
+  const seed=(kind.charCodeAt(0)*977+Math.random()*1e6)|0;
+  // 影
+  b.beginFill(0x000000,.18).drawEllipse(0,0,13,3.5).endFill();
+  // 毛玉ボディ（有機ブロブ）
+  FXS.blob(b,color,15,10,.4,seed,1,0,-14);
+  FXS.blob(b,0xffffff,7,8,.5,seed+1,.25,-4,-19);   // 毛のハイライト
+  // 耳（とんがり2本）
+  b.beginFill(color).drawPolygon([-9,-24,-15,-38,-3,-27]).drawPolygon([9,-24,15,-38,3,-27]).endFill();
+  b.beginFill(0x09397a,.3).drawPolygon([-8,-26,-12,-33,-5,-27]).drawPolygon([8,-26,12,-33,5,-27]).endFill();
+  // 目（白目＋瞳＋光）
+  b.beginFill(0xffffff).drawCircle(-5,-15,4).drawCircle(5,-15,4).endFill();
+  b.beginFill(0x09397a).drawCircle(-4.2,-15,2).drawCircle(5.8,-15,2).endFill();
+  b.beginFill(0xffffff).drawCircle(-3.6,-15.7,.8).drawCircle(6.4,-15.7,.8).endFill();
+  // あんよ
+  b.beginFill(color,.9).drawEllipse(-6,-1,4,2.5).drawEllipse(6,-1,4,2.5).endFill();
+  g.addChild(b);
+  g.position.set(W+30, GROUND);
+  world.addChild(g);
+  enemies.push({g,kind,x:W+30,y:GROUND,vx:-(.6+Math.random()*.8),t:Math.random()*9});
+}
+setInterval(()=>{ if(FX.playing) spawnEnemy(); }, 1900); spawnEnemy();
+
+// ---- 弾 ----
+const shots=[];
+function fire(){
+  const ab=ABILITIES[P.copy];
+  if(!ab.shot){ // 通常: 短いつつき
+    burst(P.x+P.face*34, P.y-14, 0xffe46d, 6, 2);
+    hitEnemies(P.x+P.face*34, P.y-14, 26, 1); return;
+  }
+  const g=new PIXI.Graphics();
+  g.beginFill(ab.shot.color).drawCircle(0,0,7).endFill();
+  g.position.set(P.x+P.face*24, P.y-16);
+  world.addChild(g);
+  shots.push({g,vx:P.face*(ab.shot.type==='dash'?11:7), vy:ab.shot.type==='lob'?-6:0, type:ab.shot.type, color:ab.shot.color});
+}
+function hitEnemies(x,y,r,dmg){
+  for(const e of enemies){
+    if(e.dead) continue;
+    if(Math.hypot(e.x-x, e.y-12-y) < r){
+      e.dead=true; kills++; document.getElementById('kill').textContent=kills;
+      burst(e.x, e.y-12, 0xf8ccd1, 18, 5); shake=6;
+      world.removeChild(e.g);
+    }
+  }
+}
+let kills=0;
+
+// ---- 啄み（吸い込み演出つきコピー） ----
+let sucking=null;
+function peck(){
+  if(sucking) return;
+  let near=null, nd=90;
+  for(const e of enemies){ if(e.dead) continue;
+    const d=Math.hypot(e.x-P.x, e.y-P.y);
+    if(d<nd && Math.sign(e.x-P.x)===P.face){ near=e; nd=d; } }
+  if(!near) return;
+  near.dead=true; sucking={e:near, t:0};
+}
+
+// ---- 入力 ----
+const keys={};
+addEventListener('keydown',e=>{ keys[e.code]=true;
+  if(e.code==='KeyZ') fire();
+  if(e.code==='KeyV') peck();
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+
+app.ticker.add((dt)=>{
+  if(!FX.playing) return;
+  // プレイヤー物理
+  P.vx = (keys['ArrowRight']?4:0) - (keys['ArrowLeft']?4:0);
+  if(P.vx) P.face=Math.sign(P.vx);
+  if(keys['ArrowUp'] && P.onGround){ P.vy=-11; P.onGround=false; P.sq=.65; }
+  P.vy+=.55*dt; P.x+=P.vx*dt; P.y+=P.vy*dt;
+  P.onGround=false;
+  for(const pl of plats){
+    if(P.x>pl.x-10 && P.x<pl.x+pl.w+10 && P.y>=pl.y && P.y<pl.y+24 && P.vy>=0){
+      if(!P.onGroundPrev && P.vy>4){ P.sq=1.45; burst(P.x,pl.y,0x95c0b9,5,2); } // 着地スカッシュ
+      P.y=pl.y; P.vy=0; P.onGround=true;
+    }
+  }
+  P.onGroundPrev=P.onGround;
+  P.x=Math.max(20,Math.min(W-20,P.x));
+  // スカッシュ&ストレッチ復元 + 歩行バウンス
+  P.sq += (1-P.sq)*.2*dt;
+  duck.scale.set(P.face*(2-P.sq), P.sq);
+  duck.position.set(P.x, P.y + (P.onGround&&P.vx? Math.sin(performance.now()/60)*2:0));
+
+  // 吸い込み演出
+  if(sucking){
+    sucking.t+=dt*.06;
+    const e=sucking.e, k=sucking.t;
+    e.g.position.set(e.x+(P.x-e.x)*k, e.y+(P.y-10-e.y)*k);
+    e.g.scale.set(1-k); e.g.rotation+=.4*dt;
+    if(k>=1){
+      world.removeChild(e.g);
+      P.copy=e.kind; drawDuck(ABILITIES[e.kind].color);
+      document.getElementById('copy').textContent=ABILITIES[e.kind].label;
+      burst(P.x,P.y-14,ABILITIES[e.kind].color,22,5); shake=4;
+      sucking=null;
+    }
+  }
+  // 敵
+  for(const e of enemies){
+    if(e.dead) continue;
+    e.t+=dt*.1; e.x+=e.vx*dt;
+    e.g.position.set(e.x, e.y + Math.abs(Math.sin(e.t*3))*-5);
+    e.g.scale.y = 1+Math.sin(e.t*6)*.06;
+    if(e.x<-40){ e.dead=true; world.removeChild(e.g); }
+    if(Math.hypot(e.x-P.x,e.y-P.y)<26){ // 被弾
+      e.dead=true; world.removeChild(e.g);
+      P.copy='none'; drawDuck(0xffe46d);
+      document.getElementById('copy').textContent='なし（被弾でコピー喪失）';
+      burst(P.x,P.y-14,0xe4969e,16,4); shake=8;
+    }
+  }
+  // 弾
+  for(const s of shots){
+    if(s.type==='lob') s.vy+=.3*dt;
+    s.g.x+=s.vx*dt; s.g.y+=s.vy*dt;
+    s.g.alpha=Math.max(0,s.g.alpha-.004*dt);
+    hitEnemies(s.g.x,s.g.y,24,1);
+    if(s.g.x<-20||s.g.x>W+20||s.g.y>H) { world.removeChild(s.g); s.done=true; }
+  }
+  shots.splice(0,shots.length,...shots.filter(s=>!s.done));
+  // パーティクル
+  for(const p of parts){
+    p.vy+=.15*dt; p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) world.removeChild(p.g);
+  }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  // 画面揺れ + パララックス
+  shake=Math.max(0,shake-1*dt);
+  world.position.set((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+  layers.forEach(l=>{ l.g.x = -((performance.now()*.02*l.speed) % W); });
+});
+</script>
+</body>
+</html>
