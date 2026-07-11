@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ぽきぽきスティック — 折れる・進む</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🥢%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#5a4a3a; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#f3d9b5; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#f3d9b5; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🥢 SPACE=倒れ込んで前転（身長ぶん前進） / X=自分を折る（低い隧道用）。節を残してゴールへ</h1>
+<div id="stage"></div>
+<div id="hud">残り節: <b id="seg">6</b>　（節が多い=遠くへ渡れる／少ない=低い所を通れる）</div>
+<script>
+const W=880,H=430,GROUND=360,SEG_LEN=34;
+const app=new PIXI.Application({width:W,height:H,background:0x8a7a62,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'ぽきぽきスティック',sub:'折れる・進む — 身長は武器であり、荷物である',
+  accent:0xc3c671,accent2:0xab8b72,bloomThreshold:.7,crt:.8,onStart:()=>FXA.play('field')});
+
+// 地形定義: 床セグメント（隙間=溝）＋低いトンネル
+const floors=[{x0:0,x1:250},{x0:340,x1:520},{x0:620,x1:880}]; // 溝: 250-340(90px), 520-620(100px)
+const tunnel={x0:660,x1:760,clearance:80}; // 節2(68px)以下で通過可
+const bg=new PIXI.Graphics();
+for(let i=0;i<14;i++) bg.beginFill(0x8a7a62,1-i*.015).drawRect(0,i*H/14,W,H/14+1).endFill();
+// 遠景の竹林
+for(let i=0;i<10;i++){
+  bg.beginFill(0x7a8a5a,.35).drawRoundedRect(60+i*90,60+((i*17)%40),10,GROUND-80,5).endFill();
+}
+app.stage.addChild(bg);
+const terrain=new PIXI.Graphics();
+for(const f of floors){
+  terrain.beginFill(0x6a5a44).drawRect(f.x0,GROUND,f.x1-f.x0,H-GROUND).endFill();
+  terrain.beginFill(0xab8b72).drawRect(f.x0,GROUND,f.x1-f.x0,7).endFill();
+}
+// 溝の底（トゲ）
+for(const [a,b] of [[250,340],[520,620]]){
+  for(let x=a;x<b;x+=14) terrain.beginFill(0x3a2f24).drawPolygon([x,H,x+7,H-18,x+14,H]).endFill();
+}
+// トンネル（張り出し岩）
+terrain.beginFill(0x4a3a2c).drawRoundedRect(tunnel.x0,GROUND-160,tunnel.x1-tunnel.x0,160-tunnel.clearance,8).endFill();
+terrain.beginFill(0x3a2f24,.6).drawRect(tunnel.x0,GROUND-tunnel.clearance-6,tunnel.x1-tunnel.x0,6).endFill();
+app.stage.addChild(terrain);
+const tLabel=new PIXI.Text('低い隧道\n(節2以下)',{fontSize:11,fill:0xf3d9b5,align:'center'});
+tLabel.anchor.set(.5); tLabel.position.set((tunnel.x0+tunnel.x1)/2,GROUND-tunnel.clearance-30);
+app.stage.addChild(tLabel);
+// ゴール: 祠
+const shrine=new PIXI.Graphics();
+FXS.crystal(shrine,0xc3c671,18,6,9,0,-22);
+shrine.beginFill(0x4a3a2c).drawRoundedRect(-16,-8,32,8,3).endFill();
+FXS.glowOrb(shrine,0xf3d9b5,6,0xffffff,0,-22);
+shrine.position.set(840,GROUND);
+app.stage.addChild(shrine);
+
+// スティック君（節の連なり・竹風）
+let segs=6, x=60, standing=true, anim=null, over=false;
+const stick=new PIXI.Container(); app.stage.addChild(stick);
+const sg=new PIXI.Graphics(); stick.addChild(sg);
+function height(){ return segs*SEG_LEN; }
+function drawStick(rot){
+  sg.clear();
+  sg.beginFill(0x3a2f24,.3).drawEllipse(0,0,14,4).endFill();
+  for(let i=0;i<segs;i++){
+    const y0=-i*SEG_LEN;
+    // 節（竹: 微テーパ＋節輪＋艶）
+    sg.beginFill(0xc3c671);
+    sg.moveTo(-8+i*.5,y0); sg.bezierCurveTo(-9+i*.5,y0-SEG_LEN*.5,-9+i*.5,y0-SEG_LEN*.5,-7.5+i*.5,y0-SEG_LEN);
+    sg.lineTo(7.5-i*.5,y0-SEG_LEN); sg.bezierCurveTo(9-i*.5,y0-SEG_LEN*.5,9-i*.5,y0-SEG_LEN*.5,8-i*.5,y0);
+    sg.closePath().endFill();
+    sg.beginFill(0x8a8a4a).drawRect(-8+i*.5,y0-2,16-i,3).endFill();      // 節輪
+    sg.beginFill(0xffffff,.25).drawRect(-6+i*.5,y0-SEG_LEN+3,3,SEG_LEN-6).endFill(); // 艶
+  }
+  // 顔（最上節）
+  const ty=-height()+10;
+  sg.beginFill(0x3a2f24).drawCircle(-3,ty,1.8).drawCircle(3,ty,1.8).endFill();
+  sg.beginFill(0xd88a6a,.7).drawEllipse(0,ty+5,2.5,1.5).endFill();
+  stick.rotation=rot;
+}
+function place(){ stick.position.set(x,GROUND); drawStick(0); }
+place();
+
+const parts=[];
+function burst(px,py,c,n=12,s=4){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*3).endFill(); g.position.set(px,py);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-2,life:1}); app.stage.addChild(g);}}
+let shake=0;
+function onFloor(px){ return floors.some(f=>px>=f.x0-4&&px<=f.x1+4); }
+function fail(msg){
+  if(over) return; over=true; FXA.stop(); FXA.sfx('gameover');
+  FX.result({title:'ぽっきり…',lines:[msg,'倒れ込みは「届く床」を見てから']});
+}
+addEventListener('keydown',e=>{
+  if(!FX.playing||anim||over) return;
+  if(e.code==='Space'){ // 倒れ込み前転: 支点=足元、着地点= x+height()
+    const land=x+height();
+    anim={t:0,land};
+    FXA.sfx('jump');
+  }
+  if(e.code==='KeyX'&&segs>1){ // 折る
+    segs--; document.getElementById('seg').textContent=segs;
+    burst(x,GROUND-height()-10,0xc3c671,14,5); FXA.sfx('break'); shake=4;
+    // 破片が飛ぶ
+    drawStick(0);
+  }
+});
+app.ticker.add(dt=>{
+  if(!FX.playing||over) return;
+  if(anim){
+    anim.t+=.05*dt;
+    const r=Math.min(1,anim.t)*Math.PI/2;
+    drawStick(r);
+    if(anim.t>=1){
+      x=anim.land; anim=null;
+      shake=5; burst(x,GROUND-4,0xab8b72,10,3); FXA.sfx('land');
+      // トンネル判定: 通過帯にいるのに背が高い→つっかえて戻る
+      if(x>tunnel.x0-10&&x<tunnel.x1+10&&height()>tunnel.clearance){
+        x-=SEG_LEN; FXA.sfx('ui'); shake=6;
+        burst(x+30,GROUND-tunnel.clearance,0x4a3a2c,10,4);
+      }
+      if(!onFloor(x)) return fail('溝に落ちた…（節'+segs+'では届かない/届きすぎた）');
+      place();
+      if(x>=820){ over=true; FXA.play('calm'); FXA.sfx('clear');
+        FX.result({title:'⛩ 参拝成功！',lines:[`残り節: ${segs}`,'折る勇気と、残す知恵']}); }
+    }
+  }
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.15*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

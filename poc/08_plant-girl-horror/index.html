@@ -2,14 +2,16 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PoC: 植物娘育成ホラー — SVG成長×彩度遷移の検証</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🌱%3C/text%3E%3C/svg%3E">
 <style>
   body { margin:0; font-family:"Yu Gothic UI",sans-serif; background:#fff3d4;
          display:flex; justify-content:center; min-height:100vh; transition:background 2s; }
   #wrap { width:min(720px,94vw); padding:16px 0 50px; }
   .room { border-radius:16px; background:#fff; box-shadow:0 4px 18px rgba(0,0,0,.1);
           padding:18px 22px; transition:filter 1.5s; }
-  h1 { font-size:16px; color:#2e5e46; margin:0 0 4px; }
+  h1, .room h2 { font-size:16px; color:#2e5e46; margin:0 0 4px; }
   .sub { font-size:12px; color:#888; margin-bottom:10px; }
   #garden { display:flex; justify-content:center; background:linear-gradient(#e8f4fb,#f6f9ee);
             border-radius:12px; margin:8px 0; }
@@ -39,17 +41,18 @@
   #titleScene button:hover { background:#c8e3bd; color:#1e3a2b; box-shadow:0 0 28px rgba(200,227,189,.8); }
   #titleScene .seed { font-size:44px; margin-bottom:10px; filter:drop-shadow(0 0 14px #8fd4a8); }
 </style>
+<script src="../common/audio.js"></script>
 </head>
 <body>
 <div id="titleScene">
   <div class="seed">🌱</div>
   <h1>SEEDLING</h1>
   <div class="sub">植物娘育成ホラー PoC<br>きっかけ一つで、あなたの味方にも敵にもなります</div>
-  <button onclick="document.getElementById('titleScene').classList.add('hidden')">▶ 培養を始める</button>
+  <button onclick="document.getElementById('titleScene').classList.add('hidden');FXA.play('calm');FXA.sfx('ui')">▶ 培養を始める</button>
 </div>
 <div id="wrap">
   <div class="room" id="room">
-    <h1>🌱 植物娘育成ホラー PoC</h1>
+    <h2>🌱 植物娘育成ホラー PoC</h2>
     <div class="sub">検証: パラメータ→SVG成長の直結・攻撃性→画面LUT（彩度/色相）遷移・「数値を見せずに状態を伝える」</div>
     <div><span id="day">Day 1</span> / 14 — 種子から芽が出て、女の子のかたちをしている…</div>
     <div id="garden">
@@ -84,8 +87,13 @@ const EFFECT={
 };
 function act(kind){
   if(ended) return;
+  const prevAggro=aggro;
   const m=EFFECT[kind]();
   lastAct=kind;
+  FXA.sfx({water:'splash',sun:'heal',talk:'ui',teach:'pickup',neglect:'evil'}[kind]||'ui');
+  // 攻撃性50跨ぎでBGM遷移（calm⇄tension）
+  if(prevAggro<50&&aggro>=50){ FXA.play('tension'); FXA.sfx('alarm'); }
+  else if(prevAggro>=50&&aggro<50){ FXA.play('calm'); }
   grow=Math.min(100,grow); trust=Math.max(0,Math.min(100,trust));
   ego=Math.min(100,ego); aggro=Math.max(0,Math.min(100,aggro));
   day++;
@@ -97,10 +105,10 @@ function act(kind){
 function finale(){
   ended=true;
   const msg=document.getElementById('msg');
-  if(aggro>=45) msg.innerHTML='<b>🥀 敵対エンド</b> — 夜中、ツルが部屋の戸を叩く音がする。彼女はもう、あなたの「育てた通り」に育ってしまった。';
-  else if(trust>=75 && ego>=50) msg.innerHTML='<b>🌸 自立エンド</b> — 「いってきます」。窓辺の鉢は空になっていた。土の上に、小さな花が一輪だけ残されている。';
-  else if(trust>=60) msg.innerHTML='<b>🌿 共依存エンド</b> — 彼女はあなたなしでは眠れない。あなたも、彼女なしでは。それは幸福に見える檻だった。';
-  else msg.innerHTML='<b>🍂 枯れエンド</b> — ある朝、葉がすべて落ちていた。最後まで、彼女の言葉を聞いてあげられなかった。';
+  if(aggro>=45){ msg.innerHTML='<b>🥀 敵対エンド</b> — 夜中、ツルが部屋の戸を叩く音がする。彼女はもう、あなたの「育てた通り」に育ってしまった。'; FXA.play('tension'); FXA.sfx('evil'); }
+  else if(trust>=75 && ego>=50){ msg.innerHTML='<b>🌸 自立エンド</b> — 「いってきます」。窓辺の鉢は空になっていた。土の上に、小さな花が一輪だけ残されている。'; FXA.sfx('clear'); }
+  else if(trust>=60){ msg.innerHTML='<b>🌿 共依存エンド</b> — 彼女はあなたなしでは眠れない。あなたも、彼女なしでは。それは幸福に見える檻だった。'; FXA.sfx('heal'); }
+  else { msg.innerHTML='<b>🍂 枯れエンド</b> — ある朝、葉がすべて落ちていた。最後まで、彼女の言葉を聞いてあげられなかった。'; FXA.stop(); FXA.sfx('gameover'); }
 }
 
 // ---- SVGプラント描画（成長段階＋攻撃性で形が変わる） ----

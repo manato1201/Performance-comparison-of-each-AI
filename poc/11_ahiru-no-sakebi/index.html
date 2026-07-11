@@ -2,13 +2,16 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PoC: アヒルの叫び — マイク音量ギミックの検証</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🎤%3C/text%3E%3C/svg%3E">
 <style>
   body { margin:0; background:#082f50; font-family:"Yu Gothic UI",sans-serif; color:#fff;
          display:flex; flex-direction:column; align-items:center; }
   h1 { font-size:14px; margin:10px 0 2px; color:#ffeca6; }
   #info { font-size:12px; color:#83c2e2; margin-bottom:6px; text-align:center; line-height:1.6; }
-  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
   #hud { font-size:13px; margin:8px; display:flex; align-items:center; gap:12px; }
   #vol { width:220px; height:14px; background:#0d1f33; border-radius:7px; overflow:hidden; border:1px solid #1169a3; }
   #vol div { height:100%; width:0%; background:linear-gradient(90deg,#ffeca6,#83c2e2,#49afd3); transition:width .06s; }

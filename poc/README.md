@@ -27,11 +27,20 @@ three.js（15）は **UnrealBloom＋低解像度ピクセルレンダリング�
 | [09_uso-trilogy](09_uso-trilogy/index.html) | [嘘三部作](../docs/09_uso-trilogy.md) | HTML/JS | フェイク判定＋**根拠選択（メタ認知）**・時間制限・SNS風UI | 本物/フェイク→根拠を選ぶ |
 | [10_ohadake-minigames](10_ohadake-minigames/index.html) | [おはだけ集](../docs/10_ohadake-minigames.md) | pixi.js | ポインタ追尾AI・ドリフト軌跡・燃料管理・逮捕→脱獄の連環 | マウスだけで運転 |
 | [11_ahiru-no-sakebi](11_ahiru-no-sakebi/index.html) | [アヒルの叫び](../docs/11_ahiru-no-sakebi.md) | pixi.js+WebAudio | **マイクdB→ゲームイベント**・音波リング・声のリスク両面 | ←→移動、叫ぶ（or X長押し） |
-| [12_verb-games](12_verb-games/index.html) | [動詞ゲーム集](../docs/12_verb-games.md) | pixi.js | Let'sDoThis: 刺激値→彩度フィルタ直結・「違う行動」判定 | 矢印キーで動き続ける |
+| [12_verb-games](12_verb-games/index.html) | [動詞ゲーム集](../docs/12_verb-games.md) | pixi.js | **12本すべて個別PoC化**（ランチャーから起動）。シノビシノバセ/Let'sDoThis/ゼリー/呪殺/ぽきぽき/俺色（彩ノ庭オマージュ）/ボンバー/SHODO/ムジュン/金剛石/幽体観光/ワイヤーキング | 各タイトル画面参照 |
 | [13_cat-guard-system](13_cat-guard-system/index.html) | [猫監視システム](../docs/13_cat-guard-system.md) | Canvas+WebAudio | 動体検知→サイズ判定→通知/威嚇音・昼夜モード・定期報告 | 眺めるシミュレータ（夜切替可） |
 | [15_plant-soulslike](15_plant-soulslike/index.html) | [植生ソウルライク](../docs/15_plant-soulslike.md) | three.js | 高低差移動・ダッシュ疾走感＋残像・派閥別インタラクション | WASD / Shift / Space / E / 派閥ボタン |
 | [16_memory-triplet](16_memory-triplet/index.html) | [記憶トリプレット](../docs/16_memory-triplet.md) | pixi.js | 記憶3枠FIFO・3手制限・全体記憶解除・スライド移動演出 | 対象クリックで記憶→隣接マス移動 |
-| [17_screen-time-family](17_screen-time-family/index.html) | [スクリーンタイム](../docs/17_screen-time-family.md) | React | 選択→遅延「本音」表示・隠しパラメータED分岐・彩度演出 | 選択肢クリック×7日 |
+| [17_screen-time-family](17_screen-time-family/index.html) | [スクリーンタイム](../docs/17_screen-time-family.md) | React | 選択→遅延「本音」表示・隠しパラメータED分岐・彩度演出・タイトルシーン | 選択肢クリック×7日 |
+| [18_floor-generator](18_floor-generator/index.html) | [README](18_floor-generator/README.md) | three.js **WebGPU+TSL** | **フロアマップ完全自動生成**（データ駆動: 部屋配置→分離→Delaunay→MST→ループ→通路→装飾→敵/ボス）。`node tests.mjs`で25テスト全PASS | seed入力・部屋数スライダー・ヒートマップ/グラフ表示 |
+
+## 🔊 音源（[common/audio.js](common/audio.js)）
+
+**BGM・効果音はすべてWebAudioで完全プロシージャル生成**（音源ファイル不要）。16ステップシーケンサによるBGM6スタイル（title/field/calm/tension/cave/boss）＋SFX17種（jump/hit/break/powerup/clear…）。対応PoC: 05・08・12全ゲーム・15（初回クリック/キー入力でAudioContextが起動）。
+
+## 🛠 関連ツール
+
+- [tools/screenshot-ocr/](../tools/screenshot-ocr/README.md) — Win+Shift+Sのスクショを**完全ローカル**で即テキスト化（Windows標準WinRT OCR・追加インストール不要）。日英対応、クリップボード書き戻し＋履歴保存
 
 ※ 14（その他構想集）はアイデア台帳のためPoC対象外。個別に昇格した時点で作成する。
 

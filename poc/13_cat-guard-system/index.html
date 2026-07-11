@@ -2,7 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PoC: 猫監視・撃退システム — 検知ロジックのシミュレータ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🐈%3C/text%3E%3C/svg%3E">
 <style>
   body { margin:0; font-family:"Yu Gothic UI",sans-serif; background:#d2ebee;
          display:flex; justify-content:center; min-height:100vh; }
@@ -10,7 +12,8 @@
   h1 { font-size:16px; color:#155a80; margin:6px 0 2px; }
   .sub { font-size:12px; color:#4a7c8c; margin-bottom:10px; }
   #panel { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
-  canvas { border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.15); background:#3d5a3d; }
+  canvas { border-radius:12px; box-shadow:0 4px 14px rgba(0,0,0,.15); background:#3d5a3d;
+    max-width:100%; height:auto; display:block; }
   #side { flex:1; min-width:260px; }
   .box { background:#fff; border-radius:12px; padding:10px 14px; margin-bottom:10px;
          box-shadow:0 3px 10px rgba(0,0,0,.08); }

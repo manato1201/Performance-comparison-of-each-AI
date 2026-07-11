@@ -2,18 +2,22 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PoC: 走れスライムくん — 三態変化×メタボール表現の検証</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E💧%3C/text%3E%3C/svg%3E">
 <style>
   body { margin:0; background:#0e5578; font-family:"Yu Gothic UI",sans-serif; color:#fff;
          display:flex; flex-direction:column; align-items:center; }
   h1 { font-size:14px; margin:10px 0 2px; color:#fad7d2; }
   #info { font-size:12px; color:#9aced8; margin-bottom:6px; }
-  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
   #hud { font-size:13px; margin:8px; } #hud b { color:#fad7d2; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
 <script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
 <script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
 </head>
 <body>
 <h1>💧 走れスライムくん PoC — ←→移動 / 1:液体 2:固体 3:気体 で三態変化してお茶会へ</h1>
@@ -26,7 +30,8 @@ const W=880,H=400;
 const app=new PIXI.Application({width:W,height:H,background:0xbad4d7,antialias:true});
 document.getElementById('stage').appendChild(app.view);
 FX.attach(app, { title:'走れスライムくん', sub:'三態変化アクション — ←→移動 / 1液体 2固体 3気体（Pでピクセル化）',
-  accent:0x5db3c9, accent2:0xfad7d2, bloomThreshold:.72, crt:.7 });
+  accent:0x5db3c9, accent2:0xfad7d2, bloomThreshold:.72, crt:.7,
+  onStart:()=>FXA.play('field') });
 
 // ---- 背景（泡沫パレット） ----
 const bg=new PIXI.Graphics();
@@ -144,6 +149,7 @@ addEventListener('keydown',e=>{
 addEventListener('keyup',e=>keys[e.code]=false);
 function setForm(f){
   form=f;
+  FXA.sfx(f==='gas'?'jump':(f==='solid'?'land':'splash'));
   document.getElementById('form').textContent=FORM[f].label;
   for(const b of blobs){
     b.g.clear();
@@ -169,6 +175,7 @@ function burst(x,y,color,n=12,spd=4){
 setInterval(()=>{ if(!done && time>0 && FX.playing){ time--; document.getElementById('time').textContent=time;
   if(time===0){
     document.getElementById('goalmsg').textContent='⏰ お茶会に間に合わなかった…';
+    FXA.stop(); FXA.sfx('gameover');
     FX.result({ title:'TIME UP…', lines:['お茶会に間に合わなかった','形態の使い分けで短縮しよう'] });
   } }},1000);
 
@@ -211,7 +218,8 @@ app.ticker.add(dt=>{
         if(b.x>ob.x-10 && b.x<ob.x+ob.w+10 && b.y>GROUND-ob.w-10){
           if(form==='solid' && Math.abs(b.vx)>1.2){
             ob.hp--; shake=6; burst(ob.x+ob.w/2,GROUND-ob.w/2,0xc9a06c,16,5);
-            if(ob.hp<=0){ ob.dead=true; drawObstacles(); burst(ob.x+ob.w/2,GROUND-ob.w/2,0x885f3e,24,7); }
+            FXA.sfx('hit');
+            if(ob.hp<=0){ ob.dead=true; drawObstacles(); burst(ob.x+ob.w/2,GROUND-ob.w/2,0x885f3e,24,7); FXA.sfx('break'); FXA.duck(); }
             b.vx=-2;
           } else b.x=ob.x-10;
         }
@@ -232,6 +240,7 @@ app.ticker.add(dt=>{
     done=true;
     document.getElementById('goalmsg').textContent='🫖 間に合った！';
     for(let i=0;i<40;i++) burst(W-70,GROUND-30,[0xfad7d2,0xfff4d1,0x9aced8][i%3],1,6);
+    FXA.play('calm'); FXA.sfx('clear');
     FX.result({ title:'🫖 CLEAR!', lines:[`残り${time}秒でお届け`,'アケミちゃんのお茶会に間に合った！'] });
   }
   // パーティクル

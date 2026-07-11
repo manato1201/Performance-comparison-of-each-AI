@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>フローティングゼリー — 浮かぶ・さまよう・伸ばす</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🪼%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#0e4666; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#fff4d1; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.4); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#fff4d1; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🪼 矢印=ゆるい推進 / Z長押し=触手を伸ばしてプランクトン捕食。ウニに注意（60秒）</h1>
+<div id="stage"></div>
+<div id="hud">スコア: <b id="sc">0</b>　残り: <b id="tm">60</b>秒</div>
+<script>
+const W=880,H=430;
+const app=new PIXI.Application({width:W,height:H,background:0x14608a,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'フローティングゼリー',sub:'浮かぶ・さまよう・伸ばす — 60秒の海月スコアアタック',
+  accent:0x9aced8,accent2:0xfff4d1,bloomThreshold:.55,onStart:()=>FXA.play('calm')});
+
+// 海のグラデ＋光条
+const bg=new PIXI.Graphics();
+for(let i=0;i<20;i++) bg.beginFill(0x0e4666+i*0x000204,1).drawRect(0,i*H/20,W,H/20+1).endFill();
+for(let i=0;i<5;i++) bg.beginFill(0xfff4d1,.04).drawPolygon([120+i*170,-20,180+i*170,-20,120+i*170+60,H,120+i*170,H]).endFill();
+app.stage.addChild(bg);
+
+// クラゲ（傘=ブロブ＋フリル＋触手4本）
+const jelly=new PIXI.Container();
+const bell=new PIXI.Graphics(); jelly.addChild(bell);
+const tent=new PIXI.Graphics(); jelly.addChild(tent);
+function drawBell(sq){
+  bell.clear();
+  FXS.glowOrb(bell,0x9aced8,30,0xd8f0f6,0,-6);
+  bell.beginFill(0x9aced8,.9);
+  bell.moveTo(-26,0); bell.bezierCurveTo(-28,-34*sq,28,-34*sq,26,0);
+  bell.bezierCurveTo(18,6,10,2,8,6); bell.bezierCurveTo(4,2,-4,2,-8,6);
+  bell.bezierCurveTo(-10,2,-18,6,-26,0); bell.closePath().endFill();
+  bell.beginFill(0xffffff,.35).drawEllipse(-8,-16*sq,8,5).endFill();
+  bell.beginFill(0xf6bfbb,.6).drawCircle(-7,-8,2.4).drawCircle(7,-8,2.4).endFill(); // 器官
+}
+drawBell(1);
+app.stage.addChild(jelly);
+const J={x:200,y:220,vx:0,vy:0,sq:1,reach:0};
+
+// プランクトン＆ウニ
+const dots=[],urchins=[];
+function spawnDot(){
+  const g=new PIXI.Graphics();
+  FXS.glowOrb(g,0xfff4d1,5);
+  g.position.set(40+Math.random()*(W-80),40+Math.random()*(H-80));
+  app.stage.addChild(g); dots.push({g,t:Math.random()*9});
+}
+function spawnUrchin(){
+  const g=new PIXI.Graphics();
+  FXS.burstStar(g,0x1a2a3a,16,12,.5,(Math.random()*99)|0);
+  FXS.glowOrb(g,0xe35b74,4,0xffffff,0,0);
+  g.position.set(W+20,60+Math.random()*(H-120));
+  app.stage.addChild(g); urchins.push({g,vx:-.5-Math.random()*.7,t:Math.random()*9});
+}
+for(let i=0;i<6;i++) spawnDot();
+setInterval(()=>{ if(FX.playing&&urchins.length<5) spawnUrchin(); },2600);
+
+let score=0,time=60,over=false;
+setInterval(()=>{ if(FX.playing&&!over){ time--; document.getElementById('tm').textContent=time;
+  if(time<=0){ over=true; FXA.stop(); FXA.sfx('clear');
+    FX.result({title:'おつかれさま',lines:[`スコア: ${score}`,'今日もいい漂いだった']}); } }},1000);
+
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+const parts=[];
+function burst(x,y,c,n=10,s=3){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*2).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);}}
+
+app.ticker.add(dt=>{
+  if(!FX.playing||over) return;
+  const now=performance.now();
+  // ぷかぷか（自動浮遊）＋ゆるい推進
+  J.vx+=((keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0))*.06*dt;
+  J.vy+=((keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0))*.06*dt - .012*dt;
+  J.vy+=Math.sin(now/900)*.01*dt;
+  J.vx*=Math.pow(.985,dt); J.vy*=Math.pow(.985,dt);
+  J.x=Math.max(30,Math.min(W-30,J.x+J.vx*dt)); J.y=Math.max(40,Math.min(H-30,J.y+J.vy*dt));
+  // 傘の脈動（推進で収縮）
+  J.sq=1+Math.sin(now/500)*.1+Math.hypot(J.vx,J.vy)*.1;
+  drawBell(J.sq);
+  jelly.position.set(J.x,J.y);
+  jelly.rotation=J.vx*.08;
+  // 触手（Zで伸ばす）
+  J.reach+=(((keys['KeyZ'])?70:22)-J.reach)*.1*dt;
+  tent.clear();
+  for(let i=0;i<4;i++){
+    const bx=-15+i*10;
+    tent.lineStyle({width:2.2,color:0xbfe3ea,alpha:.85,cap:PIXI.LINE_CAP.ROUND});
+    tent.moveTo(bx,2);
+    tent.bezierCurveTo(bx+Math.sin(now/300+i)*8, 20+J.reach*.4,
+                       bx+Math.sin(now/240+i*2)*12, 30+J.reach*.7, bx+Math.sin(now/200+i)*10, 14+J.reach);
+  }
+  tent.lineStyle(0);
+  // プランクトン捕食（触手先端の範囲）
+  for(const d of dots){
+    d.t+=dt*.04; d.g.y+=Math.sin(d.t*3)*.3*dt; d.g.alpha=.7+Math.sin(d.t*5)*.3;
+    const dist=Math.hypot(d.g.x-J.x, d.g.y-(J.y+14+J.reach*.7));
+    if(dist<26+J.reach*.2 && keys['KeyZ']){
+      score+=10; document.getElementById('sc').textContent=score;
+      burst(d.g.x,d.g.y,0xfff4d1,12,3); FXA.sfx('pickup');
+      d.g.position.set(40+Math.random()*(W-80),40+Math.random()*(H-80));
+    }
+  }
+  // ウニ
+  for(const u of urchins){
+    u.t+=dt*.05; u.g.x+=u.vx*dt; u.g.y+=Math.sin(u.t*2)*.4*dt; u.g.rotation+=.01*dt;
+    if(u.g.x<-30){ u.dead=true; app.stage.removeChild(u.g); }
+    if(Math.hypot(u.g.x-J.x,u.g.y-J.y)<34){
+      score=Math.max(0,score-15); document.getElementById('sc').textContent=score;
+      burst(J.x,J.y,0xe35b74,14,4); FXA.sfx('hit'); J.vx+=Math.sign(J.x-u.g.x)*3; u.g.x-=40;
+    }
+  }
+  urchins.splice(0,urchins.length,...urchins.filter(u=>!u.dead));
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SHODO — 怒る・鎮める・暴れる・受け入れる</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🫁%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#2a1518; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#f5c9c9; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#f5c9c9; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🫁 連打=暴れる（気持ちいいが怒りが増す）／ X長押し→輪が白リングに重なった瞬間に離す=深呼吸。3回成功で「受け入れる」</h1>
+<div id="stage"></div>
+<div id="hud">呼吸成功: <b id="br">0</b> / 3　<span id="tip">怒りに任せるか、息を整えるか</span></div>
+<script>
+const W=880,H=430,CX=W/2,CY=H/2+10;
+const app=new PIXI.Application({width:W,height:H,background:0x3a1a1e,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'SHODO',sub:'怒る・鎮める・暴れる・受け入れる — 暴れる方が、気持ちいいのに',
+  accent:0xda2730,accent2:0x75c8cf,bloomThreshold:.5,onStart:()=>FXA.play('tension')});
+
+// 背景（怒りで色が変わる: 焦がれる→一片氷心）
+const bg=new PIXI.Graphics(); app.stage.addChild(bg);
+function lerpC(a,b,t){const ar=a>>16,ag=a>>8&255,ab=a&255,br=b>>16,bg2=b>>8&255,bb=b&255;
+  return ((ar+(br-ar)*t)<<16)|((ag+(bg2-ag)*t)<<8)|(ab+(bb-ab)*t);}
+function drawBG(calm){ // calm 0..1
+  bg.clear();
+  const top=lerpC(0x4e0003,0xd2ebee,calm), bot=lerpC(0x2a0a0e,0x50c0c1,calm);
+  for(let i=0;i<18;i++) bg.beginFill(lerpC(top,bot,i/17)).drawRect(0,i*H/18,W,H/18+1).endFill();
+}
+
+// 心（中心の存在）: 怒り=トゲ茨、静まると花に
+const heart=new PIXI.Container(); app.stage.addChild(heart);
+const hg=new PIXI.Graphics(); heart.addChild(hg);
+heart.position.set(CX,CY);
+function drawHeart(rage){ // 0..100
+  hg.clear();
+  const r=46+rage*.3;
+  if(rage>50){
+    FXS.burstStar(hg,lerpC(0x75c8cf,0xda2730,(rage-50)/50),r,10+((rage/10)|0),.55,7);
+    FXS.blob(hg,0x895163,r*.55,9,.3,11);
+  } else {
+    FXS.flower(hg,lerpC(0xf5c9c9,0x75c8cf,1-rage/50),0xfff4d1,r*.7,8,9);
+  }
+  FXS.glowOrb(hg,lerpC(0x75c8cf,0xda2730,rage/100),10);
+}
+
+// 呼吸リング
+const ringG=new PIXI.Graphics(); app.stage.addChild(ringG);
+let rage=90, breaths=0, breathing=false, ringR=0, over=false, calmMode=false;
+const TARGET_R=120, TOL=16;
+const tip=document.getElementById('tip');
+
+const parts=[];
+function burst(x,y,c,n=14,s=5){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*4).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);}}
+let shake=0;
+
+addEventListener('keydown',e=>{
+  if(!FX.playing||over) return;
+  if(e.code==='KeyX'){ if(!breathing){ breathing=true; ringR=20; FXA.sfx('charge'); } return; }
+  if(e.repeat) return;
+  // 暴れる: 派手で気持ちいい（そして負ける）
+  rage=Math.min(100,rage+2);
+  shake=8;
+  burst(CX+(Math.random()-.5)*120,CY+(Math.random()-.5)*100,0xda2730,16,7);
+  FXA.sfx('hit'); FXA.duck(.3);
+  tip.textContent='……気持ちいい。でも、怒りは増えていく';
+});
+addEventListener('keyup',e=>{
+  if(e.code!=='KeyX'||!breathing||over) return;
+  breathing=false;
+  const diff=Math.abs(ringR-TARGET_R);
+  ringG.clear();
+  if(diff<TOL){
+    breaths++; rage=Math.max(0,rage-18);
+    document.getElementById('br').textContent=breaths;
+    burst(CX,CY,0x75c8cf,24,4); FXA.sfx('heal');
+    tip.textContent=['ひとつ。','ふたつ。','みっつ——'][Math.min(2,breaths-1)];
+    if(!calmMode&&rage<40){ calmMode=true; FXA.play('calm'); }
+    if(breaths>=3){
+      over=true; FXA.sfx('clear');
+      setTimeout(()=>FX.result({title:'受け入れる',lines:['怒りは消えなかった。ただ、隣に座れるようになった',
+        `残った怒り: ${Math.round(rage)}`]}),900);
+    }
+  } else {
+    rage=Math.min(100,rage+4); FXA.sfx('alarm'); shake=5;
+    tip.textContent=diff>0&&ringR<TARGET_R?'早すぎた。もっと深く':'吸いすぎた。手放すように';
+  }
+});
+app.ticker.add(dt=>{
+  if(!FX.playing) return;
+  const now=performance.now();
+  if(!over){
+    rage=Math.min(100,rage+.008*dt); // 放置でもじわり怒る
+    if(breathing){
+      ringR+=1.1*dt;
+      if(ringR>TARGET_R+60){ breathing=false; rage=Math.min(100,rage+4); FXA.sfx('alarm'); ringG.clear(); }
+      ringG.clear();
+      ringG.lineStyle(2,0xffffff,.8).drawCircle(CX,CY,TARGET_R);            // 目標リング
+      ringG.lineStyle(4,0x75c8cf,.9).drawCircle(CX,CY,ringR);               // 息の輪
+      ringG.lineStyle(1,0x75c8cf,.3).drawCircle(CX,CY,ringR*.8);
+    } else ringG.clear();
+  }
+  drawBG(1-rage/100);
+  drawHeart(rage);
+  heart.rotation=Math.sin(now/(400+ (100-rage)*20))*(.02+rage*.002);
+  heart.scale.set(1+Math.sin(now/(300-rage))* (rage/100)*.12 + Math.sin(now/1400)*.03);
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

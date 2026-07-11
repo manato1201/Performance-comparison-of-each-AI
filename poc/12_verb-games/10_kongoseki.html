@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>金剛石ガ砕けない — 砕く・集める・加える</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E⛏️%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#1a2430; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#faf7bb; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; display:flex; gap:14px; align-items:center; }
+  #hud b { color:#faf7bb; }
+  #craft { padding:7px 20px; border-radius:16px; border:1px solid #c6ceda; cursor:pointer;
+    background:#2a3a4c; color:#c6ceda; font-size:13px; }
+  #craft:disabled { opacity:.35; cursor:default; }
+  #craft:hover:not(:disabled) { background:#c6ceda; color:#1a2430; box-shadow:0 0 14px #c6ceda; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>⛏ 岩をクリックで採掘。段位が足りないと弾かれる。鉱石5個で「加える」→ ピッケル強化 → 命の石を砕け</h1>
+<div id="stage"></div>
+<div id="hud">ピッケル段位: <b id="tier">1</b>　鉱石: <b id="ore">0</b> / 5
+  <button id="craft" disabled>🔨 加える（強化）</button>
+  <span id="tip"></span></div>
+<script>
+const W=880,H=430;
+const app=new PIXI.Application({width:W,height:H,background:0x223142,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'金剛石ガ砕けない',sub:'砕く・集める・加える — 最硬を砕くには、最硬を鍛えよ',
+  accent:0xfaf7bb,accent2:0x5a7f8e,bloomThreshold:.5,onStart:()=>FXA.play('cave')});
+
+// 洞窟背景
+const bg=new PIXI.Graphics();
+for(let i=0;i<16;i++) bg.beginFill(0x223142,1-i*.02).drawRect(0,i*H/16,W,H/16+1).endFill();
+for(let i=0;i<10;i++){ // 鍾乳石
+  bg.beginFill(0x1a2430).drawPolygon([60+i*90,0, 80+i*90,0, 70+i*90,30+((i*17)%40)]).endFill();
+}
+app.stage.addChild(bg);
+
+// 岩（硬度1-4）＋命の石（硬度5）
+const TIER_C=[0,0x8a97a8,0x67c1af,0x5391c8,0x9d82ba];
+const rocks=[];
+const layout=[[130,150,1],[300,110,1],[210,300,2],[450,320,2],[620,120,3],[560,250,3],[760,300,4],[770,120,4]];
+for(const [x,y,tier] of layout){
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics(); c.addChild(g);
+  const seed=x+y;
+  const label=new PIXI.Text('硬度'+tier,{fontSize:11,fill:0xc6ceda});
+  label.anchor.set(.5); label.position.set(0,34); c.addChild(label);
+  c.position.set(x,y);
+  c.eventMode='static';
+  const rock={c,g,tier,hp:tier*2,seed,dead:false};
+  c.on('pointertap',()=>mine(rock));
+  app.stage.addChild(c);
+  rocks.push(rock);
+  drawRock(rock);
+}
+function drawRock(r){
+  r.g.clear();
+  r.g.beginFill(0x0e1620,.4).drawEllipse(0,26,26,7).endFill();
+  FXS.crystal(r.g,TIER_C[r.tier],24+r.tier*2,6+r.tier,r.seed);
+  FXS.crystal(r.g,0xffffff,7,5,r.seed+3,-8,-8);
+}
+// 命の石（中央・虹色巨大）
+const life=new PIXI.Container();
+const lg=new PIXI.Graphics(); life.addChild(lg);
+let lifeCracks=0;
+function drawLife(){
+  lg.clear();
+  lg.beginFill(0x0e1620,.5).drawEllipse(0,50,46,12).endFill();
+  for(let i=5;i>0;i--) lg.beginFill(0xfaf7bb,.04*i).drawCircle(0,0,44+(5-i)*10).endFill();
+  FXS.crystal(lg,0xd8e8f0,44,9,777);
+  // 虹の内包光
+  [0xf4afa4,0xfdda83,0x67c1af,0x88b2d4,0xc9a0e0].forEach((c,i)=>{
+    FXS.crystal(lg,c,10,5,i*7+3,Math.cos(i*1.26)*18,Math.sin(i*1.26)*18-4);
+  });
+  // ヒビ
+  lg.lineStyle(2.5,0x1a2430,.9);
+  if(lifeCracks>=1){ lg.moveTo(-10,-38).lineTo(2,-16).lineTo(-8,4); }
+  if(lifeCracks>=2){ lg.moveTo(24,-24).lineTo(10,-2).lineTo(22,18); lg.moveTo(2,-16).lineTo(16,-10); }
+  if(lifeCracks>=3){ lg.moveTo(-30,-8).lineTo(-14,8).lineTo(-24,28); lg.moveTo(-8,4).lineTo(4,22); }
+  lg.lineStyle(0);
+}
+drawLife();
+const lifeLabel=new PIXI.Text('命の石（硬度5）',{fontSize:12,fill:0xfaf7bb,fontWeight:'bold'});
+lifeLabel.anchor.set(.5); lifeLabel.position.set(0,72); life.addChild(lifeLabel);
+life.position.set(W/2,H/2+10);
+life.eventMode='static';
+life.on('pointertap',()=>mineLife());
+app.stage.addChild(life);
+
+// ピッケル（カーソル追従・段位で豪華に）
+const pick=new PIXI.Container(); app.stage.addChild(pick);
+const pg=new PIXI.Graphics(); pick.addChild(pg);
+function drawPick(tier){
+  pg.clear();
+  pg.lineStyle(4,0x8a6a4a).moveTo(0,0).lineTo(-14,26); pg.lineStyle(0);   // 柄
+  const headC=TIER_C[Math.min(4,tier)]||0x8a97a8;
+  pg.beginFill(headC);                                                     // 頭（曲線刃）
+  pg.moveTo(-14,-4); pg.bezierCurveTo(0,-14,14,-12,20,-2);
+  pg.bezierCurveTo(10,-6,-4,-4,-14,2); pg.closePath().endFill();
+  if(tier>=2) FXS.crystal(pg,0x67c1af,4,5,3,4,-7);
+  if(tier>=3) FXS.crystal(pg,0x5391c8,4,5,5,-4,-6);
+  if(tier>=4){ FXS.glowOrb(pg,0x9d82ba,5,0xffffff,12,-6); }
+}
+drawPick(1);
+app.view.addEventListener('mousemove',e=>{
+  const r=app.view.getBoundingClientRect();
+  pick.position.set((e.clientX-r.left)*(W/r.width)+18,(e.clientY-r.top)*(H/r.height)+6);
+});
+
+let tier=1, ore=0, over=false, swing=0;
+const tip=document.getElementById('tip');
+const craftBtn=document.getElementById('craft');
+const parts=[];
+function burst(x,y,c,n=14,s=5){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*3).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,life:1}); app.stage.addChild(g);}}
+let shake=0;
+function refresh(){
+  document.getElementById('tier').textContent=tier;
+  document.getElementById('ore').textContent=ore;
+  craftBtn.disabled=!(ore>=5&&tier<4);
+  craftBtn.textContent=tier>=4?'🔨 最硬到達':'🔨 加える（強化 → 段位'+(tier+1)+'）';
+}
+function mine(r){
+  if(!FX.playing||over||r.dead) return;
+  swing=1;
+  if(tier>=r.tier){
+    r.hp--; FXA.sfx('hit'); shake=4;
+    burst(r.c.x,r.c.y,TIER_C[r.tier],12,5);
+    r.c.x+=4; setTimeout(()=>r.c.x-=4,80);
+    if(r.hp<=0){
+      r.dead=true; r.c.visible=false;
+      ore++; FXA.sfx('pickup');
+      burst(r.c.x,r.c.y,0xfaf7bb,20,6);
+      tip.textContent='鉱石を集めた！';
+      refresh();
+    }
+  } else {
+    FXA.sfx('ui'); shake=2;
+    burst(r.c.x,r.c.y-20,0xffffff,5,3);
+    tip.textContent='カキンッ——歯が立たない（段位'+r.tier+'が要る）';
+  }
+}
+function mineLife(){
+  if(!FX.playing||over) return;
+  swing=1;
+  if(tier<4){ FXA.sfx('ui'); shake=3; tip.textContent='ビクともしない……最硬のピッケル（段位4）を作れ'; return; }
+  lifeCracks++; FXA.sfx('break'); FXA.duck(); shake=10;
+  burst(life.x,life.y,0xfaf7bb,26,7);
+  drawLife();
+  if(lifeCracks>=3){
+    over=true; FXA.play('calm'); FXA.sfx('clear');
+    for(let i=0;i<50;i++) burst(life.x,life.y,[0xf4afa4,0xfdda83,0x67c1af,0x88b2d4][i%4],1,8);
+    life.visible=false;
+    FX.result({title:'💎 砕けた！',lines:['万病を癒す欠片を手に入れた','最硬は、積み重ねでしか砕けない']});
+  } else tip.textContent=`ヒビが入った！（${lifeCracks}/3）`;
+}
+craftBtn.onclick=()=>{
+  if(ore<5||tier>=4) return;
+  ore-=5; tier++;
+  drawPick(tier); refresh();
+  FXA.sfx('powerup'); FXA.duck(); shake=6;
+  burst(pick.x,pick.y,TIER_C[tier],22,6);
+  tip.textContent='ピッケルに鉱石を加えた——段位'+tier+'！';
+};
+refresh();
+
+app.ticker.add(dt=>{
+  const now=performance.now();
+  swing=Math.max(0,swing-.12*dt);
+  pick.rotation=-.4+Math.sin(swing*Math.PI)*-1.1;
+  life.scale.set(1+Math.sin(now/700)*.02);
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.12*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

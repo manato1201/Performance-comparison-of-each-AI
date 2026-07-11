@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ムジュン — 奪う・欠ける・朽ちる</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🌒%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#08062e; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#ce7891; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; justify-content:center; }
+  .bar { width:min(180px,60vw); height:10px; background:#1a1440; border-radius:5px; overflow:hidden; display:inline-block; vertical-align:middle; }
+  .bar div { height:100%; transition:width .3s; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🌒 矢印=移動 / 灯りびとに触れてZ長押し=光を奪う。心が満ちるのが先か、世界が朽ちるのが先か</h1>
+<div id="stage"></div>
+<div id="hud">
+  <span>❤ 心 <span class="bar"><div id="hb" style="background:#ce7891;width:20%"></div></span></span>
+  <span>🍂 朽ち <span class="bar"><div id="db" style="background:#5f2664;width:0%"></div></span></span>
+</div>
+<script>
+const W=880,H=430,GROUND=380;
+const app=new PIXI.Application({width:W,height:H,background:0x14103a,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'ムジュン',sub:'奪う・欠ける・朽ちる — 満たすほど、涸れていく',
+  accent:0xce7891,accent2:0x5f2664,bloomThreshold:.45,onStart:()=>FXA.play('cave')});
+
+// 世界（木々=朽ちで枯れ姿に差し替え）
+const treesG=new PIXI.Graphics(); app.stage.addChild(treesG);
+const trees=[];
+for(let i=0;i<6;i++) trees.push({x:80+i*145,s:.8+((i*7)%5)*.12,seed:i*31+5});
+function drawTrees(decay){ // 0..1
+  treesG.clear();
+  treesG.beginFill(0x0c0930).drawRect(0,GROUND,W,H-GROUND).endFill();
+  treesG.beginFill(0x241b52,.8).drawRect(0,GROUND,W,4).endFill();
+  for(const t of trees){
+    const dead=decay> (t.seed%100)/100*.9+.05;
+    // 幹（ベジェ）
+    treesG.lineStyle(5*t.s,dead?0x2a2440:0x3a2f5e);
+    treesG.moveTo(t.x,GROUND).quadraticCurveTo(t.x-8*t.s,GROUND-46*t.s,t.x-2*t.s,GROUND-80*t.s);
+    treesG.moveTo(t.x-2*t.s,GROUND-50*t.s).quadraticCurveTo(t.x+16*t.s,GROUND-64*t.s,t.x+20*t.s,GROUND-88*t.s);
+    treesG.lineStyle(0);
+    if(dead){ // 枯れ枝
+      treesG.lineStyle(2*t.s,0x2a2440);
+      treesG.moveTo(t.x-2*t.s,GROUND-80*t.s).lineTo(t.x-14*t.s,GROUND-96*t.s);
+      treesG.moveTo(t.x+20*t.s,GROUND-88*t.s).lineTo(t.x+30*t.s,GROUND-100*t.s);
+      treesG.lineStyle(0);
+    } else { // 葉ブロブ
+      FXS.blob(treesG,0x4a3d7a,20*t.s,8,.35,t.seed,1,t.x-6*t.s,GROUND-92*t.s);
+      FXS.blob(treesG,0x5d4d94,15*t.s,8,.4,t.seed+2,1,t.x+18*t.s,GROUND-96*t.s);
+    }
+  }
+}
+// 月
+const moon=new PIXI.Graphics();
+FXS.glowOrb(moon,0xe7ebf6,26,0xffffff,W-120,70);
+app.stage.addChild(moon);
+
+// 自分（欠けた心）
+const hero=new PIXI.Container();
+const hg=new PIXI.Graphics(); hero.addChild(hg);
+function drawHero(fill){ // 0..1
+  hg.clear();
+  hg.beginFill(0x08062e,.4).drawEllipse(0,2,13,4).endFill();
+  // ハート形（ベジェ）＋欠け
+  hg.beginFill(0xce7891);
+  hg.moveTo(0,-8);
+  hg.bezierCurveTo(-16,-26,-30,-6,0,10);
+  hg.bezierCurveTo(30,-6,16,-26,0,-8);
+  hg.closePath().endFill();
+  // 欠け（黒い切り込み・fillで塞がる）
+  hg.beginFill(0x14103a);
+  const bite=1-fill;
+  hg.drawPolygon([4,-14, 4+14*bite,-10, 6+8*bite,-2, 12*bite,2, 4,-4]);
+  hg.endFill();
+  hg.beginFill(0xffffff,.5).drawCircle(-8,-9,2.5).endFill();
+  hg.beginFill(0x08062e).drawCircle(-6,-4,1.6).drawCircle(3,-4,1.6).endFill();
+}
+hero.position.set(120,GROUND-16);
+app.stage.addChild(hero);
+const P={x:120,y:GROUND-16};
+
+// 灯りびと（NPC・生命の光）
+const npcs=[];
+for(let i=0;i<5;i++){
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics(); c.addChild(g);
+  const seed=50+i*17;
+  c.position.set(180+i*130, GROUND-16-((i*29)%60));
+  app.stage.addChild(c);
+  npcs.push({c,g,seed,light:1,drained:false,t:Math.random()*9,x:c.x,y:c.y});
+}
+function drawNPC(n){
+  const {g,seed,light}=n;
+  g.clear();
+  if(light>0) FXS.glowOrb(g,0xf1d7e7,10+light*8,0xffffff,0,0);
+  FXS.blob(g,light>0?0xd8c8e8:0x4a4458,13,9,.3,seed,1,0,0);
+  const eye=light>0?0x362654:0x2a2438;
+  g.beginFill(eye).drawCircle(-4,-2,1.8).drawCircle(4,-2,1.8).endFill();
+  if(light<=0){ g.lineStyle(1.5,0x2a2438).moveTo(-5,4).quadraticCurveTo(0,6,5,4); g.lineStyle(0); }
+}
+npcs.forEach(drawNPC);
+
+let heart=20, decay=0, over=false, drainTarget=null, beam=new PIXI.Graphics();
+app.stage.addChild(beam);
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+const parts=[];
+function burst(x,y,c,n=12,s=4){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*3).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);}}
+drawTrees(0); drawHero(.2);
+
+app.ticker.add(dt=>{
+  if(!FX.playing||over) return;
+  const now=performance.now();
+  P.x=Math.max(24,Math.min(W-24,P.x+(((keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0))*3)*dt));
+  P.y=Math.max(60,Math.min(GROUND-14,P.y+(((keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0))*3)*dt));
+  hero.position.set(P.x,P.y+Math.sin(now/500)*3);
+  // 奪う（Z長押し・近接）
+  beam.clear(); drainTarget=null;
+  if(keys['KeyZ']){
+    for(const n of npcs){
+      if(n.drained) continue;
+      if(Math.hypot(n.x-P.x,n.y-P.y)<70){ drainTarget=n; break; }
+    }
+    if(drainTarget){
+      const n=drainTarget;
+      n.light-=.012*dt;
+      heart=Math.min(100,heart+.24*dt);
+      decay=Math.min(100,decay+.22*dt);
+      // 光の吸引ビーム
+      beam.lineStyle(3,0xf1d7e7,.7).moveTo(n.x,n.y).quadraticCurveTo((n.x+P.x)/2,(n.y+P.y)/2-30,P.x,P.y);
+      beam.lineStyle(0);
+      if(Math.random()<.3*dt){ burst(n.x,n.y,0xf1d7e7,2,2); FXA.sfx('charge'); }
+      if(n.light<=0){
+        n.light=0; n.drained=true; drawNPC(n);
+        heart=Math.min(100,heart+8); decay=Math.min(100,decay+6);
+        FXA.sfx('evil'); burst(n.x,n.y,0x5f2664,18,4);
+        drawTrees(decay/100);
+      } else drawNPC(n);
+    }
+  }
+  // NPCゆらぎ（未奪取のみ）
+  for(const n of npcs){ if(!n.drained){ n.t+=dt*.03; n.c.y=n.y+Math.sin(n.t*2)*4; } }
+  // HUD＆判定
+  document.getElementById('hb').style.width=heart+'%';
+  document.getElementById('db').style.width=decay+'%';
+  drawHero(heart/100);
+  if(heart>=100){
+    over=true; FXA.stop(); FXA.sfx('clear');
+    FX.result({title:'心、満つ',lines:[`朽ち: ${Math.round(decay)}%`,
+      decay>70?'満たされた頃、世界はほとんど朽ちていた':'まだ、灯りの残る世界で']});
+  } else if(decay>=100){
+    over=true; FXA.stop(); FXA.sfx('gameover');
+    FX.result({title:'世界、朽つ',lines:['すべての灯りを奪う前に、大地が先に涸れた',
+      `心: ${Math.round(heart)}% — 欠けたまま、独りの夜`]});
+  }
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+});
+</script>
+</body>
+</html>

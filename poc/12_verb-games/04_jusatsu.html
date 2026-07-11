@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>呪殺 — 祝う・奪う・恨む・呪う</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🕯️%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#1a0f24; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#ce7891; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #cmds { display:flex; gap:8px; margin:10px; }
+  #cmds button { padding:9px 22px; border-radius:16px; border:1px solid #ac306c; cursor:pointer;
+    background:#2a1535; color:#ce7891; font-size:14px; transition:all .2s; }
+  #cmds button:hover:not(:disabled) { background:#ac306c; color:#fff; box-shadow:0 0 16px #ac306c; }
+  #cmds button:disabled { opacity:.35; cursor:default; }
+  #log { font-size:13px; color:#ce7891; min-height:40px; text-align:center; max-width:760px; line-height:1.7; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🕯 呪殺 — 相手をクリックで選択 → コマンド。格上を呪うと跳ね返る。「恨む」で力を見抜け</h1>
+<div id="stage"></div>
+<div id="cmds">
+  <button id="bUram">👁 恨む（力を視る）</button>
+  <button id="bNoro">🕯 呪う（攻撃）</button>
+  <button id="bIwau">✨ 祝う（力+2）</button>
+  <button id="bUbau">🩸 奪う（弱った相手を喰う）</button>
+</div>
+<div id="log">六道の辻。三体の怨敵が立ち塞がる——まずは「恨む」で相手の力を測れ</div>
+<script>
+const W=880,H=380;
+const app=new PIXI.Application({width:W,height:H,background:0x241533,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'呪殺',sub:'祝う・奪う・恨む・呪う — 力を見抜き、呪い返しを恐れよ',
+  accent:0xce7891,accent2:0x5f2664,bloomThreshold:.5,onStart:()=>FXA.play('tension')});
+
+// 逢魔が時の空
+const bg=new PIXI.Graphics();
+for(let i=0;i<16;i++) bg.beginFill(0x241533,1-i*.02).drawRect(0,i*H/16,W,H/16+1).endFill();
+bg.beginFill(0x08062e).drawRect(0,H-60,W,60).endFill();
+for(let i=0;i<7;i++){ // 卒塔婆
+  bg.beginFill(0x0f0a1a).drawRoundedRect(90+i*120,H-140+((i*13)%30),16,90,4).endFill();
+}
+app.stage.addChild(bg);
+
+// 自分（呪術師）
+let myPower=4, myHP=50;
+const me=new PIXI.Container();
+const mg=new PIXI.Graphics();
+mg.beginFill(0x08062e,.4).drawEllipse(0,0,26,6).endFill();
+mg.beginFill(0x2a1535); mg.moveTo(-18,0); mg.bezierCurveTo(-20,-46,20,-46,18,0); mg.closePath().endFill(); // 外套
+mg.beginFill(0xe8d8c8).drawCircle(0,-52,12).endFill();
+mg.beginFill(0x1a0f24); mg.moveTo(-12,-54); mg.bezierCurveTo(-10,-70,10,-70,12,-54);
+mg.quadraticCurveTo(0,-60,-12,-54); mg.closePath().endFill(); // 笠髪
+mg.beginFill(0xce7891).drawCircle(-4,-51,1.6).drawCircle(4,-51,1.6).endFill();
+FXS.glowOrb(mg,0xce7891,6,0xffffff,22,-30); // 手燭の焔
+me.addChild(mg); me.position.set(140,H-40); app.stage.addChild(me);
+
+// 敵3体（力は隠し: 3/6/9）
+const foes=[];
+const powers=[3,6,9].sort(()=>Math.random()-.5);
+for(let i=0;i<3;i++){
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics();
+  const seed=17+i*31;
+  g.beginFill(0x08062e,.4).drawEllipse(0,0,24,6).endFill();
+  FXS.blob(g,[0x5f2664,0x3a1a4e,0x4e2158][i],26+powers[i],9,.35,seed,1,0,-30); // 力が大きいほど巨躯
+  // 仮面
+  g.beginFill(0xe8e0d0).drawEllipse(0,-36,12,15).endFill();
+  g.beginFill(0x1a0f24).drawEllipse(-5,-40,2.6,4).drawEllipse(5,-40,2.6,4).endFill();
+  g.lineStyle(1.5,0xac306c).moveTo(-6,-28).quadraticCurveTo(0,-24,6,-28); g.lineStyle(0);
+  // 角
+  g.beginFill(0x2a1535).drawPolygon([-8,-48,-13,-62,-4,-50]).drawPolygon([8,-48,13,-62,4,-50]).endFill();
+  c.addChild(g);
+  const label=new PIXI.Text('力: ???',{fontSize:13,fill:0xce7891,fontWeight:'bold'});
+  label.anchor.set(.5); label.position.set(0,-84); c.addChild(label);
+  const hpT=new PIXI.Text('',{fontSize:11,fill:0x9a8ab5});
+  hpT.anchor.set(.5); hpT.position.set(0,16); c.addChild(hpT);
+  const ring=new PIXI.Graphics(); c.addChild(ring);
+  c.position.set(400+i*160,H-50);
+  c.eventMode='static';
+  const foe={c,g,label,hpT,ring,power:powers[i],hp:24,revealed:false,dead:false,t:Math.random()*9};
+  c.on('pointertap',()=>{ if(FX.playing){ target=foe; refresh(); FXA.sfx('ui'); } });
+  app.stage.addChild(c); foes.push(foe);
+}
+let target=foes[0];
+
+const log=document.getElementById('log');
+const B={uram:bUram,noro:bNoro,iwau:bIwau,ubau:bUbau};
+const parts=[];
+function burst(x,y,c,n=16,s=4){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*3).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s-1,life:1}); app.stage.addChild(g);}}
+let shake=0,busy=false;
+function refresh(){
+  for(const f of foes){
+    f.ring.clear();
+    if(f===target&&!f.dead) f.ring.lineStyle(2,0xce7891,.9).drawEllipse(0,0,30,9);
+    f.hpT.text=f.dead?'滅':'魂'+f.hp;
+    f.label.text=f.dead?'':'力: '+(f.revealed?f.power:'???')+(f.revealed&&f.power>myPower?' ⚠格上':'');
+  }
+  document.getElementById('log').dataset.x=1;
+}
+function status(){ return `【あなた】力${myPower}／命${myHP}`; }
+function endCheck(){
+  if(foes.every(f=>f.dead)){ FXA.stop(); FXA.sfx('clear');
+    FX.result({title:'祓伐',lines:[`三体の怨敵を滅した`,`最終の力: ${myPower}`,'恨みは、視てから呪え']}); return true; }
+  if(myHP<=0){ FXA.stop(); FXA.sfx('gameover');
+    FX.result({title:'呪い返し',lines:['己より強き者を呪った報い','「恨む」で力を測ってから挑め']}); return true; }
+  return false;
+}
+function act(kind){
+  if(!FX.playing||busy||target.dead) return;
+  busy=true; Object.values(B).forEach(b=>b.disabled=true);
+  const t=target;
+  if(kind==='uram'){
+    t.revealed=true; FXA.sfx('evil');
+    burst(t.c.x,t.c.y-40,0x1e5697,10,2);
+    log.innerHTML=`👁 怨嗟の眼が視た——奴の力は <b>${t.power}</b>。${t.power>myPower?'今呪えば跳ね返るぞ':'呪殺できる'}<br>${status()}`;
+  } else if(kind==='noro'){
+    FXA.sfx('evil'); burst(t.c.x,t.c.y-40,0xac306c,22,5);
+    if(t.power>myPower){
+      const ref=(t.power-myPower)*6; myHP-=ref; shake=10; FXA.sfx('hit');
+      burst(me.x,me.y-40,0xda2730,20,5);
+      log.innerHTML=`🕯 呪いが<b>跳ね返った</b>！ 力の差${t.power-myPower} → 命−${ref}<br>${status()}`;
+    } else {
+      const dmg=8+myPower-t.power; t.hp-=dmg; shake=5;
+      t.c.x+=6; setTimeout(()=>t.c.x-=6,100);
+      log.innerHTML=`🕯 呪詛が通った——魂−${dmg}${t.hp<=0?'（消滅寸前…「奪う」で喰らえる）':''}<br>${status()}`;
+      if(t.hp<=0){ t.hp=0; }
+    }
+  } else if(kind==='iwau'){
+    myPower+=2; FXA.sfx('heal'); burst(me.x,me.y-46,0xf1d7e7,16,3);
+    log.innerHTML=`✨ 己を祝い、力を練る——力 <b>${myPower}</b> に上昇<br>${status()}`;
+  } else if(kind==='ubau'){
+    if(t.hp>0){ log.innerHTML=`🩸 まだ魂が強い。弱らせてから奪え（魂${t.hp}）<br>${status()}`; }
+    else {
+      t.dead=true; myPower+=t.power; FXA.sfx('powerup'); FXA.duck();
+      burst(t.c.x,t.c.y-30,0xce7891,30,6); t.c.alpha=.25; shake=6;
+      log.innerHTML=`🩸 滅した怨敵の力を喰らう——力 <b>${myPower}</b> に！<br>${status()}`;
+      target=foes.find(f=>!f.dead)||t;
+    }
+  }
+  refresh();
+  if(endCheck()) return;
+  setTimeout(()=>{ // 生存敵の反撃（弱いランダム攻撃）
+    const alive=foes.filter(f=>!f.dead);
+    if(alive.length&&myHP>0){
+      const a=alive[(Math.random()*alive.length)|0];
+      const d=2+Math.floor(a.power/3);
+      myHP-=d; shake=4; FXA.sfx('hit'); burst(me.x,me.y-40,0x5f2664,10,3);
+      log.innerHTML+=`<br>👹 ${'怨敵'}の瘴気——命−${d}（命${myHP}）`;
+      endCheck();
+    }
+    busy=false; Object.values(B).forEach(b=>b.disabled=false);
+  },700);
+}
+bUram.onclick=()=>act('uram'); bNoro.onclick=()=>act('noro');
+bIwau.onclick=()=>act('iwau'); bUbau.onclick=()=>act('ubau');
+refresh();
+
+app.ticker.add(dt=>{
+  for(const f of foes){ if(f.dead) continue;
+    f.t+=dt*.04; f.c.y=H-50+Math.sin(f.t*2)*4; f.g.rotation=Math.sin(f.t)*.05; }
+  me.y=H-40+Math.sin(performance.now()/600)*3;
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.vy+=.06*dt; p.life-=.025*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

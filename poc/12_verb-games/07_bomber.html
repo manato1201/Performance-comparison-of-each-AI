@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>押しつけボンバー — 贈る・押す・投げる</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E💣%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#3a2f4b; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#fdd000; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#fdd000; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>💣 矢印=移動 / Z=接触した相手に爆弾を押し付ける。導火線が尽きたら保持者が爆発！ 最後の1人になれ</h1>
+<div id="stage"></div>
+<div id="hud">ラウンド: <b id="rd">1</b> / 3　勝利: <b id="win">0</b></div>
+<script>
+const W=880,H=430;
+const app=new PIXI.Application({width:W,height:H,background:0x4a3d5e,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'押しつけボンバー',sub:'贈る・押す・投げる — 爆弾は、もらったら返すのが礼儀',
+  accent:0xfdd000,accent2:0xe35b74,bloomThreshold:.55,onStart:()=>{FXA.play('boss');startRound();}});
+
+// アリーナ（八角形の宴会場）
+const arena=new PIXI.Graphics();
+const CX=W/2,CY=H/2,AR=190;
+const octo=[]; for(let i=0;i<8;i++){const a=i/8*Math.PI*2+Math.PI/8; octo.push(CX+Math.cos(a)*AR*1.15,CY+Math.sin(a)*AR*.95);}
+arena.beginFill(0x3a2f4b).drawRect(0,0,W,H).endFill();
+arena.beginFill(0x5d4d75).drawPolygon(octo).endFill();
+arena.lineStyle(3,0x9d82ba).drawPolygon(octo); arena.lineStyle(0);
+for(let i=0;i<8;i++){ // 提灯
+  const a=i/8*Math.PI*2+Math.PI/8;
+  FXS.glowOrb(arena,[0xfdd000,0xf19db5][i%2],7,0xffffff,CX+Math.cos(a)*AR*1.15,CY+Math.sin(a)*AR*.95-18);
+}
+app.stage.addChild(arena);
+
+// キャラ生成（ブロブ＋個性: リボン/角/眼鏡/ヒゲ）
+function makeChara(color,deco,seed){
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics();
+  g.beginFill(0x2a2138,.35).drawEllipse(0,2,14,4).endFill();
+  FXS.blob(g,color,16,10,.32,seed,1,0,-14);
+  FXS.blob(g,0xffffff,7,8,.4,seed+1,.3,-4,-19);
+  g.beginFill(0xffffff).drawCircle(-5,-14,3.6).drawCircle(5,-14,3.6).endFill();
+  g.beginFill(0x2a2138).drawCircle(-4.3,-14,1.8).drawCircle(5.7,-14,1.8).endFill();
+  if(deco===0){ g.beginFill(0xe35b74).drawPolygon([-6,-28,-14,-34,-8,-24]).drawPolygon([6,-28,14,-34,8,-24]).endFill();
+                g.beginFill(0xe35b74).drawCircle(0,-27,3).endFill(); }          // リボン
+  if(deco===1){ g.beginFill(0xfdd000).drawPolygon([-7,-26,-10,-38,-3,-28]).endFill(); } // 片角
+  if(deco===2){ g.lineStyle(2,0x2a2138).drawCircle(-5,-14,5).drawCircle(5,-14,5).moveTo(-1,-14).lineTo(1,-14); g.lineStyle(0);} // 眼鏡
+  if(deco===3){ g.lineStyle(2,0x2a2138).moveTo(-6,-7).quadraticCurveTo(0,-4,6,-7); g.lineStyle(0);} // ヒゲ
+  c.addChild(g);
+  app.stage.addChild(c);
+  return c;
+}
+const COLORS=[0xf19db5,0x89c997,0x9fd9f6,0x9d82ba];
+const players=[];
+for(let i=0;i<4;i++){
+  players.push({c:makeChara(COLORS[i],i,20+i*13),x:0,y:0,vx:0,vy:0,alive:true,ai:i>0,t:Math.random()*9});
+}
+const ME=players[0];
+
+// 爆弾（導火線つき）
+const bomb=new PIXI.Container();
+const bombG=new PIXI.Graphics(); bomb.addChild(bombG);
+app.stage.addChild(bomb);
+function drawBomb(fusePct){
+  bombG.clear();
+  FXS.blob(bombG,0x2a2138,11,9,.15,3,1,0,0);
+  bombG.beginFill(0xffffff,.3).drawEllipse(-3,-3,4,2.5).endFill();
+  bombG.lineStyle(2.5,0x8a6a4a).moveTo(2,-9).quadraticCurveTo(8,-16,6+fusePct*8,-18-fusePct*6); bombG.lineStyle(0);
+  FXS.burstStar(bombG,0xfdd000,5+Math.random()*3,6,.4,(Math.random()*99)|0,6+fusePct*8,-18-fusePct*6);
+}
+let holder=0, fuse=100, round=1, wins=0, roundActive=false, passCd=0;
+
+function startRound(){
+  const alive=[];
+  players.forEach((p,i)=>{
+    const a=i/4*Math.PI*2;
+    p.x=CX+Math.cos(a)*120; p.y=CY+Math.sin(a)*90;
+    p.alive=true; p.c.visible=true; p.c.alpha=1;
+  });
+  holder=(Math.random()*4)|0; fuse=100; roundActive=true;
+  document.getElementById('rd').textContent=round;
+}
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+const parts=[];
+function burst(x,y,c,n=16,s=5){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*4).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);}}
+let shake=0;
+function inArena(x,y){ return Math.hypot((x-CX)/1.15,(y-CY)/.95)<AR-14; }
+
+app.ticker.add(dt=>{
+  if(!FX.playing) return;
+  const now=performance.now();
+  passCd=Math.max(0,passCd-dt);
+  if(roundActive){
+    fuse-=.14*dt*(1+ (3-players.filter(p=>p.alive).length)*.25);
+    // 移動
+    for(const p of players){
+      if(!p.alive) continue;
+      p.t+=dt*.05;
+      if(!p.ai){
+        p.vx+=(((keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0))*.5)*dt;
+        p.vy+=(((keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0))*.5)*dt;
+      } else {
+        // AI: 保持者は最寄りを追う、非保持者は保持者から逃げる
+        const iAmHolder=players[holder]===p;
+        let tx,ty;
+        if(iAmHolder){
+          let best=null,bd=1e9;
+          for(const q of players){ if(q===p||!q.alive) continue;
+            const d=Math.hypot(q.x-p.x,q.y-p.y); if(d<bd){bd=d;best=q;} }
+          tx=best.x; ty=best.y;
+        } else {
+          const h=players[holder];
+          tx=p.x+(p.x-h.x); ty=p.y+(p.y-h.y);
+          tx+=Math.sin(p.t*2)*40; ty+=Math.cos(p.t*1.7)*40;
+        }
+        const d=Math.hypot(tx-p.x,ty-p.y)||1;
+        p.vx+=(tx-p.x)/d*.42*dt; p.vy+=(ty-p.y)/d*.42*dt;
+      }
+      p.vx*=Math.pow(.9,dt); p.vy*=Math.pow(.9,dt);
+      let nx=p.x+p.vx*dt, ny=p.y+p.vy*dt;
+      if(!inArena(nx,ny)){ // 壁で滑る
+        const a=Math.atan2(ny-CY,nx-CX);
+        nx=CX+Math.cos(a)*(AR-15)*1.15*.99; ny=CY+Math.sin(a)*(AR-15)*.95*.99;
+        p.vx*=.5; p.vy*=.5;
+      }
+      p.x=nx; p.y=ny;
+      p.c.position.set(p.x,p.y);
+      p.c.scale.set(1+Math.sin(now/120+p.t)* (players[holder]===p?.1:.03));
+    }
+    // 押し付け（プレイヤーZ / AIは接触で自動）
+    const h=players[holder];
+    for(let i=0;i<4;i++){
+      const p=players[i];
+      if(p===h||!p.alive) continue;
+      const d=Math.hypot(p.x-h.x,p.y-h.y);
+      if(d<34 && passCd<=0){
+        const canPass = h===ME ? keys['KeyZ'] : true;
+        if(canPass){
+          holder=i; passCd=30; FXA.sfx('ui'); shake=3;
+          burst((p.x+h.x)/2,(p.y+h.y)/2,0xfdd000,10,3);
+        }
+      }
+    }
+    // 爆弾追従
+    const hb=players[holder];
+    bomb.position.set(hb.x+16,hb.y-26);
+    drawBomb(Math.max(0,fuse/100));
+    bomb.visible=true;
+    // 爆発
+    if(fuse<=0){
+      const victim=players[holder];
+      victim.alive=false; victim.c.alpha=.2;
+      burst(victim.x,victim.y,0xe35b74,30,7); burst(victim.x,victim.y,0xfdd000,20,5);
+      FXA.sfx('break'); FXA.duck(); shake=14;
+      const alive=players.filter(p=>p.alive);
+      if(!ME.alive){
+        roundActive=false; FXA.stop(); FXA.sfx('gameover');
+        FX.result({title:'💥 爆散…',lines:[`ラウンド${round}で脱落`,'導火線が短い相手ほど早く手放せ']});
+      } else if(alive.length===1){
+        roundActive=false; wins++; document.getElementById('win').textContent=wins;
+        FXA.sfx('powerup');
+        if(round>=3){ FXA.play('calm'); FXA.sfx('clear');
+          FX.result({title:'👑 宴の覇者！',lines:[`${wins} / 3 ラウンド勝利`,'贈り物は、笑顔で返すもの']}); }
+        else { round++; setTimeout(startRound,1200); }
+      } else {
+        fuse=100; holder=players.indexOf(alive[(Math.random()*alive.length)|0]);
+      }
+    }
+  }
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

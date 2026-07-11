@@ -2,13 +2,16 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PoC: imo — 調理形態変化×相性バトルの検証</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🥔%3C/text%3E%3C/svg%3E">
 <style>
   body { margin:0; background:#212557; font-family:"Yu Gothic UI",sans-serif; color:#fff;
          display:flex; flex-direction:column; align-items:center; }
   h1 { font-size:14px; margin:10px 0 2px; color:#fee59f; }
   #info { font-size:12px; color:#c8b5b3; margin-bottom:6px; }
-  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
   #hud { font-size:13px; margin:8px; } #hud b { color:#fee59f; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>

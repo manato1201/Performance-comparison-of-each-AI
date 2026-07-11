@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>俺色に染まれ — 染める・吸う・描く</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🖌️%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#2a2a30; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#f3acb8; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#f3acb8; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<!-- 852wa.com「彩ノ庭」オマージュ: 墨線だけの庭に、歩みと筆で彩を取り戻す -->
+<h1>🎨 矢印=移動 / Z=色を放つ。墨線の庭を80%染めたらクリア。「消し屋」が彩を吸っていく</h1>
+<div id="stage"></div>
+<div id="hud">染色率: <b id="pc">0</b>%　（染めるほどBGMが鮮やかになる）</div>
+<script>
+const W=880,H=430,CW=40,CH=40,COLS=W/CW,ROWS=H/CH|0;
+const app=new PIXI.Application({width:W,height:H,background:0xf2efe8,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'俺色に染まれ',sub:'染める・吸う・描く — 墨線の世界に、彩を（彩ノ庭に捧ぐ）',
+  accent:0xd474a6,accent2:0x88b2d4,bloomThreshold:.75,crt:.7,onStart:()=>{FXA.play('field');FXA.volume(.15,null);}});
+
+// 墨線の庭（インクラインの木・石・家のシルエット）
+const ink=new PIXI.Graphics();
+function inkTree(x,y,s){
+  ink.lineStyle(3,0x2a2a30).moveTo(x,y).quadraticCurveTo(x-6*s,y-30*s,x-2*s,y-52*s);
+  ink.moveTo(x-1*s,y-30*s).quadraticCurveTo(x+14*s,y-40*s,x+20*s,y-56*s);
+  ink.moveTo(x-2*s,y-52*s).quadraticCurveTo(x-16*s,y-62*s,x-20*s,y-76*s);
+  ink.lineStyle(2,0x2a2a30);
+  ink.drawEllipse(x-20*s,y-82*s,14*s,8*s).drawEllipse(x+22*s,y-62*s,16*s,9*s).drawEllipse(x-2*s,y-60*s,12*s,7*s);
+  ink.lineStyle(0);
+}
+inkTree(130,360,1); inkTree(700,380,1.3); inkTree(430,340,.8);
+ink.lineStyle(2.5,0x2a2a30).drawRoundedRect(560,140,140,90,4); // 庵
+ink.moveTo(548,140).lineTo(630,92).lineTo(712,140);
+ink.drawCircle(240,150,26); ink.moveTo(214,150).lineTo(266,150); // 月と地平
+for(let i=0;i<5;i++) ink.drawEllipse(90+i*160,410,30,7);        // 石
+ink.lineStyle(0);
+const paintLayer=new PIXI.Graphics();
+app.stage.addChild(paintLayer);
+app.stage.addChild(ink);
+
+// 染色グリッド
+const grid=Array.from({length:ROWS},()=>Array(COLS).fill(0)); // 0=墨 1..n=色
+const PAL=[0xf3acb8,0xd474a6,0xcb9cc6,0x88b2d4,0xdcc6df];
+function repaint(){
+  paintLayer.clear();
+  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+    if(grid[y][x]>0){
+      paintLayer.beginFill(PAL[(x+y+grid[y][x])%PAL.length],.75)
+        .drawRoundedRect(x*CW+1,y*CH+1,CW-2,CH-2,10).endFill();
+    }
+  }
+}
+function ratio(){ let c=0; for(const r of grid) for(const v of r) if(v>0)c++; return c/(ROWS*COLS); }
+
+// パレット（主人公: 筆を持つ絵の具の精）
+const hero=new PIXI.Container();
+const hg=new PIXI.Graphics();
+hg.beginFill(0x2a2a30,.25).drawEllipse(0,0,12,4).endFill();
+FXS.blob(hg,0xf3acb8,15,9,.3,5,1,0,-16);
+FXS.blob(hg,0xffffff,7,8,.4,6,.4,-4,-20);
+hg.beginFill(0x2a2a30).drawCircle(-4,-18,2).drawCircle(4,-18,2).endFill();
+hg.lineStyle(2.5,0x8a6a4a).moveTo(8,-14).lineTo(20,-34); hg.lineStyle(0);   // 筆
+hg.beginFill(0xd474a6); hg.moveTo(20,-34); hg.bezierCurveTo(24,-40,26,-42,22,-46);
+hg.bezierCurveTo(20,-42,18,-38,20,-34); hg.closePath().endFill();            // 穂先
+hero.addChild(hg);
+hero.position.set(100,300);
+app.stage.addChild(hero);
+const P={x:100,y:300};
+
+// 消し屋（インクブロブ）
+const erasers=[];
+for(let i=0;i<2;i++){
+  const g=new PIXI.Graphics();
+  FXS.blob(g,0x2a2a30,17,10,.45,40+i*7,1,0,0);
+  g.beginFill(0xf2efe8).drawCircle(-5,-3,3).drawCircle(5,-3,3).endFill();
+  g.beginFill(0x2a2a30).drawCircle(-5,-3,1.4).drawCircle(5,-3,1.4).endFill();
+  g.position.set(300+i*300,150);
+  app.stage.addChild(g);
+  erasers.push({g,x:g.x,y:g.y,a:Math.random()*7,t:Math.random()*9});
+}
+
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+const parts=[];
+function burst(x,y,c,n=10,s=3){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*3).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);}}
+let milestones={25:false,50:false,75:false}, over=false, paintCd=0;
+
+app.ticker.add(dt=>{
+  if(!FX.playing||over) return;
+  const now=performance.now();
+  P.x=Math.max(16,Math.min(W-16,P.x+(((keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0))*3.4)*dt));
+  P.y=Math.max(20,Math.min(H-14,P.y+(((keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0))*3.4)*dt));
+  hero.position.set(P.x,P.y);
+  hero.rotation=Math.sin(now/300)*.05;
+  // 染める（Z）: 周囲2セル
+  paintCd-=dt;
+  if(keys['KeyZ']){
+    const cx=P.x/CW|0, cy=P.y/CH|0;
+    let painted=false;
+    for(let iy=-1;iy<=1;iy++)for(let ix=-1;ix<=1;ix++){
+      const gx=cx+ix, gy=cy+iy;
+      if(gx>=0&&gy>=0&&gx<COLS&&gy<ROWS&&grid[gy][gx]===0){ grid[gy][gx]=1+((gx+gy)%4); painted=true; }
+    }
+    if(painted){
+      repaint();
+      burst(P.x,P.y-10,PAL[(now/200|0)%PAL.length],6,2.5);
+      if(paintCd<=0){ FXA.sfx('ui'); paintCd=12; }
+      const pc=Math.round(ratio()*100);
+      document.getElementById('pc').textContent=pc;
+      FXA.volume(.15+ratio()*.4,null);   // 染めるほど音楽が満ちる（彩ノ庭）
+      for(const m of [25,50,75]) if(pc>=m&&!milestones[m]){ milestones[m]=true; FXA.sfx('powerup'); FXA.duck(); }
+      if(pc>=80){
+        over=true; FXA.play('calm'); FXA.sfx('clear');
+        for(let i=0;i<40;i++) burst(Math.random()*W,Math.random()*H,PAL[i%5],1,4);
+        FX.result({title:'🌸 彩、満つ',lines:[`染色率 ${pc}%`,'墨線の庭に、あなたの色が咲いた']});
+      }
+    }
+  }
+  // 消し屋: うろつき＋塗りを灰に戻す
+  for(const e of erasers){
+    e.t+=dt*.02; e.a+=Math.sin(e.t*3)*.03*dt;
+    e.x+=Math.cos(e.a)*1.1*dt; e.y+=Math.sin(e.a)*1.1*dt;
+    if(e.x<30||e.x>W-30) e.a=Math.PI-e.a;
+    if(e.y<30||e.y>H-30) e.a=-e.a;
+    e.g.position.set(e.x,e.y);
+    e.g.scale.set(1+Math.sin(e.t*6)*.08);
+    const gx=e.x/CW|0, gy=e.y/CH|0;
+    if(grid[gy]?.[gx]>0){ grid[gy][gx]=0; repaint();
+      document.getElementById('pc').textContent=Math.round(ratio()*100); }
+    if(Math.hypot(e.x-P.x,e.y-P.y)<26){
+      FXA.sfx('hit'); burst(P.x,P.y,0x2a2a30,12,4);
+      P.x+=Math.sign(P.x-e.x)*40; P.y+=Math.sign(P.y-e.y)*30;
+    }
+  }
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+});
+</script>
+</body>
+</html>

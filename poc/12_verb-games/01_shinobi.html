@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoC: シノビシノバセ — 忍ぶ・忍ばせる・縛る・斬る</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🥷%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#1a1a22; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:14px; margin:10px 0 2px; color:#f8f4a2; }
+  #info { font-size:12px; color:#999; margin-bottom:6px; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.6); max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#f8f4a2; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🌙 シノビシノバセ PoC — 矢印:移動 / X:罠を忍ばせる(最大2) / Z:背後から一閃。影に忍び、巻物を奪って左上の門へ</h1>
+<div id="info">動詞ゲーム集より。検証: 影ステルス（忍ぶ）・罠設置（忍ばせる・縛る）・背後一閃（斬る）・視界コーン巡回AI</div>
+<div id="stage"></div>
+<div id="hud">状態: <b id="st">潜伏中</b>　罠: <b id="tp">2</b>　巻物: <b id="sc">未入手</b></div>
+<script>
+const W=880,H=460;
+const app=new PIXI.Application({width:W,height:H,background:0x23232e,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{ title:'シノビシノバセ', sub:'忍ぶ・忍ばせる・縛る・斬る — 影に潜み、巻物を奪え（Pでピクセル化）',
+  accent:0xf8f4a2, accent2:0x3c6f98, bloomThreshold:.6, onStart:()=>FXA.play('tension') });
+
+// ---- 庭園の床（月の雫パレット） ----
+const floor=new PIXI.Graphics();
+for(let y=0;y<H;y+=46)for(let x=0;x<W;x+=46)
+  floor.beginFill(((x/46+y/46)%2)?0x2a2a36:0x27272f).drawRect(x,y,46,46).endFill();
+floor.beginFill(0xf8f4a2,.06).drawPolygon([600,0,750,0,500,H,350,H]).endFill(); // 月光の帯
+floor.beginFill(0xf8f4a2,.9).drawCircle(824,44,20).endFill();                    // 月
+floor.beginFill(0x23232e,.9).drawCircle(816,38,15).endFill();
+app.stage.addChild(floor);
+
+// ---- 影エリア（暗ブロブ＝忍ぶ場所）と木立 ----
+const shadows=[{x:160,y:140,r:80},{x:440,y:330,r:90},{x:700,y:130,r:74},{x:250,y:410,r:64}];
+const shadowG=new PIXI.Graphics();
+for(const s of shadows){
+  FXS.blob(shadowG,0x14141c,s.r,11,.28,s.x,.75,s.x,s.y);
+  FXS.blob(shadowG,0x0e0e14,s.r*.62,9,.32,s.y+7,.8,s.x,s.y);
+  FXS.limb(shadowG,0x2e2e3a,7,s.x-6,s.y+6,s.x-2,s.y-26,s.x+6,s.y-46);   // 幹
+  FXS.blob(shadowG,0x31506b,26,9,.35,s.x+s.y,.95,s.x+8,s.y-56);          // 樹冠
+  FXS.blob(shadowG,0x3c6f98,14,8,.4,s.x*3,.8,s.x-4,s.y-66);
+  FXS.leaf(shadowG,0x3c6f98,20,6,.4,s.x+14,s.y-52);
+}
+app.stage.addChild(shadowG);
+
+// ---- 出口の門と巻物 ----
+const gate=new PIXI.Graphics();
+FXS.limb(gate,0x3c6f98,8,36,64,38,36,40,14); FXS.limb(gate,0x3c6f98,8,84,64,82,36,80,14);
+gate.beginFill(0x6b6482).drawRect(24,8,72,8).endFill();
+gate.beginFill(0x3c6f98).drawRect(30,22,60,5).endFill();
+app.stage.addChild(gate);
+const gateGlow=new PIXI.Graphics(); FXS.glowOrb(gateGlow,0xf8f4a2,14); gateGlow.position.set(60,40); gateGlow.visible=false;
+app.stage.addChild(gateGlow);
+const scroll=new PIXI.Graphics();
+for(let i=3;i>0;i--) scroll.beginFill(0xf8f4a2,.07*i).drawCircle(0,0,12+(3-i)*7).endFill();
+scroll.beginFill(0xe8e0c0).drawRoundedRect(-13,-6,26,12,5).endFill();
+scroll.beginFill(0x8a7a4a).drawCircle(-13,0,4).drawCircle(13,0,4).endFill();
+scroll.beginFill(0xd0405a).drawRect(-2,-8,4,16).endFill();
+scroll.position.set(800,400); app.stage.addChild(scroll);
+
+// ---- 衛兵（巡回＋視界コーン） ----
+function makeGuard(seed){
+  const g=new PIXI.Graphics();
+  g.beginFill(0x000000,.32).drawEllipse(0,17,14,5).endFill();          // 接地影
+  FXS.blob(g,0x6b6482,15,9,.22,seed,1,0,3);                            // 胴（具足）
+  FXS.blob(g,0x565070,10,8,.3,seed+9,1,0,10);                          // 腰当て
+  FXS.limb(g,0x3c3c47,4,5,2,15,-5,21,-16);                             // 槍腕
+  g.lineStyle({width:2.5,color:0xc9c2a6,cap:PIXI.LINE_CAP.ROUND});
+  g.moveTo(21,-16).lineTo(29,-34); g.lineStyle(0);
+  g.beginFill(0xc9c2a6).drawPolygon([29,-34,33,-40,31,-32]).endFill(); // 穂先
+  FXS.blob(g,0x82a0b3,9,8,.18,seed+5,1,0,-11);                         // 頭
+  g.beginFill(0x3c3c47).drawEllipse(0,-15,11,4).endFill();             // 笠
+  g.beginFill(0xf8f4a2).drawCircle(-3,-10,1.6).drawCircle(3,-10,1.6).endFill();
+  return g;
+}
+const coneG=new PIXI.Graphics(); app.stage.addChild(coneG);
+const guards=[
+  {g:makeGuard(11),x:300,y:150,pts:[[300,150],[560,150],[560,290],[300,290]],wp:1,angle:0,alive:true,bound:0,alert:0,lost:0},
+  {g:makeGuard(27),x:760,y:280,pts:[[760,280],[620,420],[820,420]],wp:1,angle:0,alive:true,bound:0,alert:0,lost:0},
+];
+for(const gd of guards) app.stage.addChild(gd.g);
+const ropeG=new PIXI.Graphics(); app.stage.addChild(ropeG);
+
+// ---- 忍者（頭巾のベジェシルエット） ----
+const player=new PIXI.Graphics();
+player.beginFill(0x000000,.35).drawEllipse(0,14,11,4).endFill();
+FXS.leaf(player,0x3c6f98,17,5,.55,7,0);                                // 靡くマフラー
+player.beginFill(0x3c3c47);
+player.moveTo(0,-16); player.bezierCurveTo(10,-17,13,-4,10,8);
+player.quadraticCurveTo(0,15,-10,8); player.bezierCurveTo(-13,-4,-10,-17,0,-16);
+player.closePath().endFill();
+player.beginFill(0x8a8698).drawEllipse(0,-8,7,3.6).endFill();          // 顔窓
+player.beginFill(0xf8f4a2).drawCircle(-3,-8,1.6).drawCircle(3,-8,1.6).endFill();
+player.beginFill(0xffffff,.9).drawCircle(-2.4,-8.6,.6).drawCircle(3.6,-8.6,.6).endFill();
+player.position.set(70,420); app.stage.addChild(player);
+const P={x:70,y:420};
+
+// ---- 罠・演出 ----
+const trapLayer=new PIXI.Graphics(); app.stage.addChildAt(trapLayer,app.stage.getChildIndex(shadowG)+1);
+let traps=[],trapsLeft=2,hasScroll=false,over=false,kills=0,used=0,shake=0,elapsed=0;
+const parts=[],slashes=[];
+function burst(x,y,color,n=16,spd=4){
+  for(let i=0;i<n;i++){
+    const g=new PIXI.Graphics();
+    g.beginFill(color).drawCircle(0,0,1.5+Math.random()*3).endFill();
+    g.position.set(x,y);
+    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
+    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);
+  }
+}
+const wrap=a=>{ while(a>Math.PI)a-=Math.PI*2; while(a<-Math.PI)a+=Math.PI*2; return a; };
+const inShadow=()=>shadows.some(s=>Math.hypot(P.x-s.x,P.y-s.y)<s.r*.85);
+const setSt=t=>document.getElementById('st').textContent=t;
+const keys={};
+addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(!FX.playing||over) return;
+  if(e.code==='KeyX'&&trapsLeft>0){                                    // 忍ばせる
+    trapsLeft--; used++; traps.push({x:P.x,y:P.y});
+    document.getElementById('tp').textContent=trapsLeft;
+    FXA.sfx('ui'); setSt('罠を忍ばせた');
+  }
+  if(e.code==='KeyZ'){                                                 // 斬る
+    for(const gd of guards){
+      if(!gd.alive) continue;
+      const d=Math.hypot(gd.x-P.x,gd.y-P.y);
+      const behind=Math.abs(wrap(Math.atan2(P.y-gd.y,P.x-gd.x)-gd.angle))>2.2;
+      if(d<38&&(behind||gd.bound>0)){
+        gd.alive=false; kills++; FXA.sfx('hit'); shake=8;
+        burst(gd.x,gd.y,0x82a0b3,22,5); burst(gd.x,gd.y,0xf8f4a2,10,7);
+        slashes.push({x:gd.x,y:gd.y,life:1,a:Math.random()*Math.PI});
+        setSt('一閃…！');
+      }
+    }
+  }
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+setInterval(()=>{ if(FX.playing&&!over) elapsed++; },1000);
+
+app.ticker.add(dt=>{
+  if(!FX.playing) return;
+  const now=performance.now();
+  scroll.y=400+Math.sin(now/500)*3; scroll.rotation=Math.sin(now/800)*.1;
+  gateGlow.visible=hasScroll; gateGlow.alpha=.6+Math.sin(now/300)*.4;
+  if(over) return;
+  // 移動
+  const dx=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);
+  const dy=(keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0);
+  P.x=Math.max(16,Math.min(W-16,P.x+dx*2.7*dt)); P.y=Math.max(16,Math.min(H-16,P.y+dy*2.7*dt));
+  player.position.set(P.x,P.y);
+  player.scale.set(1+((dx||dy)?Math.sin(now/90)*.06:Math.sin(now/400)*.03),1-((dx||dy)?Math.sin(now/90)*.06:0));
+  const hidden=inShadow();
+  player.alpha=hidden?.38:1;
+  // 巻物・出口
+  if(!hasScroll&&Math.hypot(P.x-scroll.x,P.y-scroll.y)<26){
+    hasScroll=true; scroll.visible=false; FXA.sfx('pickup'); burst(P.x,P.y,0xf8f4a2,20,4);
+    document.getElementById('sc').textContent='入手！出口へ'; setSt('巻物を奪った');
+  }
+  if(hasScroll&&Math.hypot(P.x-60,P.y-40)<40){
+    over=true; FXA.sfx('clear');
+    FX.result({title:'任務完了',lines:[`${elapsed}秒で帰還`,`斬った衛兵 ${kills} / 使った罠 ${used}`,'忍び、忍ばせ、縛り、斬った']});
+    return;
+  }
+  // 罠描画
+  trapLayer.clear();
+  for(const t of traps){
+    trapLayer.lineStyle(2,0xc9b98a,.9).drawCircle(t.x,t.y,9).drawCircle(t.x,t.y,5);
+    trapLayer.lineStyle(0).beginFill(0xf8f4a2,.8).drawCircle(t.x,t.y,2).endFill();
+  }
+  // 衛兵AI
+  coneG.clear(); ropeG.clear();
+  let anyAlert=false;
+  for(const gd of guards){
+    if(!gd.alive){ gd.g.alpha=Math.max(0,gd.g.alpha-.05*dt); gd.g.rotation+=.1*dt; continue; }
+    // 罠発動（縛る）
+    for(let i=traps.length-1;i>=0;i--){
+      if(Math.hypot(gd.x-traps[i].x,gd.y-traps[i].y)<16&&gd.bound<=0){
+        gd.bound=240; gd.alert=0; traps.splice(i,1); FXA.sfx('break'); shake=6;
+        burst(gd.x,gd.y,0xc9b98a,18,5); setSt('縛った！');
+      }
+    }
+    if(gd.bound>0){
+      gd.bound-=dt; gd.g.rotation=Math.sin(now/60)*.12;
+      ropeG.lineStyle(3,0xc9b98a);
+      for(let i=0;i<3;i++) ropeG.moveTo(gd.x-14,gd.y-10+i*8).lineTo(gd.x+14,gd.y-6+i*8);
+      ropeG.lineStyle(0);
+      gd.g.position.set(gd.x,gd.y); continue;
+    }
+    gd.g.rotation=Math.sin(now/200+gd.x)*.05;
+    // 発見判定
+    const d=Math.hypot(P.x-gd.x,P.y-gd.y);
+    const ang=Math.atan2(P.y-gd.y,P.x-gd.x);
+    const seen=!hidden&&d<190&&Math.abs(wrap(ang-gd.angle))<.55;
+    if(seen){ if(gd.alert===0){ FXA.sfx('alarm'); setSt('発見された！'); } gd.alert=1; gd.lost=0; }
+    else if(gd.alert>0){ gd.lost+=dt; if(gd.lost>170){ gd.alert=0; setSt('やり過ごした…'); } }
+    if(gd.alert>0) anyAlert=true;
+    // 移動（追跡 or 巡回）
+    let tx,ty,spd;
+    if(gd.alert>0){ tx=P.x; ty=P.y; spd=2.35; }
+    else { const w=gd.pts[gd.wp]; tx=w[0]; ty=w[1]; spd=1.15;
+      if(Math.hypot(tx-gd.x,ty-gd.y)<8) gd.wp=(gd.wp+1)%gd.pts.length; }
+    const ta=Math.atan2(ty-gd.y,tx-gd.x);
+    gd.angle+=wrap(ta-gd.angle)*.08*dt;
+    gd.x+=Math.cos(gd.angle)*spd*dt; gd.y+=Math.sin(gd.angle)*spd*dt;
+    gd.g.position.set(gd.x,gd.y);
+    // 視界コーン
+    for(let i=3;i>0;i--)
+      coneG.beginFill(gd.alert>0?0xc65244:0xf8f4a2,.05*i).moveTo(gd.x,gd.y)
+        .arc(gd.x,gd.y,190*i/3,gd.angle-.55,gd.angle+.55).lineTo(gd.x,gd.y).endFill();
+    // 接触＝失敗
+    if(d<20){
+      over=true; FXA.sfx('gameover');
+      FX.result({title:'御用となった',lines:[`生存 ${elapsed}秒`,'影が足りなかった…','忍ぶ者、影と共にあれ']});
+      return;
+    }
+  }
+  if(!over&&!anyAlert) setSt(hidden?'影に忍んでいる':'潜伏中');
+  // 斬撃エフェクト・粒子
+  for(const s of slashes){ s.life-=.06*dt; }
+  const slG=coneG; // コーンと同レイヤーに描く
+  for(const s of slashes) if(s.life>0){
+    slG.lineStyle(3*s.life,0xffffff,s.life)
+      .moveTo(s.x-30*Math.cos(s.a),s.y-30*Math.sin(s.a)).lineTo(s.x+30*Math.cos(s.a),s.y+30*Math.sin(s.a)).lineStyle(0);
+  }
+  slashes.splice(0,slashes.length,...slashes.filter(s=>s.life>0));
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life; if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

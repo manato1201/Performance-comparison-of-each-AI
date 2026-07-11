@@ -1,0 +1,7 @@
+# デザイン修正に使用したスキルパッケージ（納品物ではないためコミットしない）
+web-production-skill/
+__MACOSX/
+
+# Python
+__pycache__/
+*.pyc

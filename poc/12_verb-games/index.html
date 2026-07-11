@@ -2,166 +2,67 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>PoC: Let'sDoThis — 行動＝彩度＝生命の検証（動詞ゲーム集）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>動詞ゲーム集 — 12 VERBS</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🔤%3C/text%3E%3C/svg%3E">
 <style>
-  body { margin:0; background:#1a1a1a; font-family:"Yu Gothic UI",sans-serif; color:#fff;
-         display:flex; flex-direction:column; align-items:center; }
-  h1 { font-size:14px; margin:10px 0 2px; color:#e99aad; }
-  #info { font-size:12px; color:#999; margin-bottom:6px; }
-  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.6); }
-  #hud { font-size:13px; margin:8px; } #hud b { color:#e99aad; }
+  body { margin:0; min-height:100vh; font-family:"Yu Gothic UI",sans-serif; color:#e8e8f0;
+    background:radial-gradient(ellipse at 30% 10%, #232338, #14141c 70%); overflow-x:hidden; }
+  .orb { position:fixed; border-radius:50%; filter:blur(2px); opacity:.5; pointer-events:none;
+    animation:drift 16s linear infinite; }
+  @keyframes drift { from{ transform:translateY(105vh);} to{ transform:translateY(-10vh);} }
+  #wrap { max-width:1080px; margin:0 auto; padding:40px 20px 70px; position:relative; z-index:1; }
+  h1 { font-size:30px; letter-spacing:.16em; margin:0;
+    text-shadow:0 0 24px #e99aad, 0 0 60px #5baedb; }
+  .sub { color:#9a9ab5; font-size:13px; margin:10px 0 28px; line-height:1.9; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; }
+  a.card { display:block; text-decoration:none; color:#e8e8f0; border-radius:14px; padding:16px 18px;
+    background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.12);
+    transition:transform .2s, box-shadow .2s, border-color .2s; }
+  a.card:hover { transform:translateY(-4px); border-color:var(--c,#e99aad);
+    box-shadow:0 8px 30px rgba(0,0,0,.5), 0 0 22px var(--c,#e99aad); }
+  .num { font-size:11px; color:#8888a5; letter-spacing:.25em; }
+  .title { font-size:17px; font-weight:bold; margin:4px 0 2px; }
+  .verbs { font-size:11.5px; color:#a8a8c5; margin-bottom:10px; }
+  .chips span { display:inline-block; width:16px; height:16px; border-radius:4px; margin-right:4px;
+    border:1px solid rgba(255,255,255,.25); vertical-align:middle; }
+  footer { margin-top:34px; color:#77779a; font-size:11.5px; line-height:1.9;
+    border-top:1px solid rgba(255,255,255,.1); padding-top:14px; }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
-<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
-<script src="../common/fx.js"></script>
 </head>
 <body>
-<h1>🎨 Let'sDoThis PoC — 矢印キーで動き続けろ。同じ動きは飽きる。止まれば世界が色を失う</h1>
-<div id="info">動詞ゲーム集より。検証: 刺激値→ColorMatrix彩度の直結・「違う行動」判定・色の花火（百花繚乱）</div>
-<div id="stage"></div>
-<div id="hud">刺激: <b id="stim">50</b>%　生存: <b id="time">0</b>秒　<span id="msg">何もしないのは、緩やかな自殺</span></div>
+<div id="wrap">
+  <h1>🔤 動詞ゲーム集 — 12 VERBS</h1>
+  <div class="sub">「動詞からゲームを作る」量産ライン。各ゲームは単一HTML・1〜3分・BGM/SFX完全プロシージャル生成。<br>
+  設計書: <a href="../../docs/12_verb-games.md" style="color:#5baedb">docs/12_verb-games.md</a></div>
+  <div id="grid">
+    <a class="card" href="01_shinobi.html" style="--c:#82a0b3"><div class="num">01</div><div class="title">シノビシノバセ</div><div class="verbs">忍ぶ・忍ばせる・縛る・斬る</div><div class="chips"><span style="background:#82a0b3"></span><span style="background:#3c6f98"></span><span style="background:#3c3c47"></span><span style="background:#f8f4a2"></span></div></a>
+    <a class="card" href="02_letsdothis.html" style="--c:#d70056"><div class="num">02</div><div class="title">Let'sDoThis</div><div class="verbs">飽きる・動く・急ぐ</div><div class="chips"><span style="background:#e99aad"></span><span style="background:#d70056"></span><span style="background:#5baedb"></span><span style="background:#7fa77b"></span></div></a>
+    <a class="card" href="03_jelly.html" style="--c:#5db3c9"><div class="num">03</div><div class="title">フローティングゼリー</div><div class="verbs">浮かぶ・さまよう・伸ばす</div><div class="chips"><span style="background:#9aced8"></span><span style="background:#5db3c9"></span><span style="background:#1572a3"></span><span style="background:#fff4d1"></span></div></a>
+    <a class="card" href="04_jusatsu.html" style="--c:#ac306c"><div class="num">04</div><div class="title">呪殺</div><div class="verbs">祝う・奪う・恨む・呪う</div><div class="chips"><span style="background:#ce7891"></span><span style="background:#ac306c"></span><span style="background:#5f2664"></span><span style="background:#1e5697"></span></div></a>
+    <a class="card" href="05_pokipoki.html" style="--c:#c3c671"><div class="num">05</div><div class="title">ぽきぽきスティック</div><div class="verbs">折れる・進む</div><div class="chips"><span style="background:#f3d9b5"></span><span style="background:#c9bcb3"></span><span style="background:#c3c671"></span><span style="background:#ab8b72"></span></div></a>
+    <a class="card" href="06_oreiro.html" style="--c:#d474a6"><div class="num">06</div><div class="title">俺色に染まれ</div><div class="verbs">染める・吸う・描く</div><div class="chips"><span style="background:#f3acb8"></span><span style="background:#d474a6"></span><span style="background:#dcc6df"></span><span style="background:#88b2d4"></span></div></a>
+    <a class="card" href="07_bomber.html" style="--c:#fdd000"><div class="num">07</div><div class="title">押しつけボンバー</div><div class="verbs">贈る・押す・投げる</div><div class="chips"><span style="background:#fdd000"></span><span style="background:#f19db5"></span><span style="background:#9d82ba"></span><span style="background:#e35b74"></span></div></a>
+    <a class="card" href="08_shodo.html" style="--c:#da2730"><div class="num">08</div><div class="title">SHODO</div><div class="verbs">怒る・鎮める・暴れる・受け入れる</div><div class="chips"><span style="background:#da2730"></span><span style="background:#895163"></span><span style="background:#75c8cf"></span><span style="background:#2a8bc0"></span></div></a>
+    <a class="card" href="09_mujun.html" style="--c:#8a5fa5"><div class="num">09</div><div class="title">ムジュン</div><div class="verbs">奪う・欠ける・朽ちる</div><div class="chips"><span style="background:#ce7891"></span><span style="background:#5f2664"></span><span style="background:#362654"></span><span style="background:#08062e"></span></div></a>
+    <a class="card" href="10_kongoseki.html" style="--c:#c6ceda"><div class="num">10</div><div class="title">金剛石ガ砕けない</div><div class="verbs">砕く・集める・加える</div><div class="chips"><span style="background:#faf7bb"></span><span style="background:#c6ceda"></span><span style="background:#375578"></span><span style="background:#5a7f8e"></span></div></a>
+    <a class="card" href="11_yutai.html" style="--c:#82a0b3"><div class="num">11</div><div class="title">幽体観光</div><div class="verbs">供える・漂う・浮かぶ・散る</div><div class="chips"><span style="background:#e7ebf6"></span><span style="background:#82a0b3"></span><span style="background:#6b6482"></span><span style="background:#3c3c47"></span></div></a>
+    <a class="card" href="12_wireking.html" style="--c:#49afd3"><div class="num">12</div><div class="title">ワイヤーキング</div><div class="verbs">飛ばす・吸い付く・蹴る・飛ぶ</div><div class="chips"><span style="background:#83c2e2"></span><span style="background:#49afd3"></span><span style="background:#1169a3"></span><span style="background:#f7dc41"></span></div></a>
+  </div>
+  <footer>共通基盤: <b>fx.js</b>（Scene遷移＝Stateパターン／ピクセルディゾルブ遷移／AdvancedBloom＋CRTシェーダー／FXS複雑シェイプ）＋ <b>audio.js</b>（WebAudio 16ステップシーケンサによるプロシージャルBGM6種・SFX17種、音源ファイル不要）<br>
+  操作は各ゲームのタイトル画面参照。Pキー=ピクセル化モード（全ゲーム共通）</footer>
+</div>
 <script>
-const W=880,H=440;
-const app=new PIXI.Application({width:W,height:H,background:0x14141c,antialias:true});
-document.getElementById('stage').appendChild(app.view);
-
-// 全体彩度フィルタ（刺激値と直結）
-const cm=new PIXI.ColorMatrixFilter();
-app.stage.filters=[cm];
-FX.attach(app, { title:"Let'sDoThis", sub:'動詞ゲーム集 — 動き続けろ。同じ動きは飽きる。止まれば色を失う（Pでピクセル化）',
-  accent:0xe99aad, accent2:0xd70056, bloomThreshold:.6 });
-
-// 百花繚乱パレット
-const COLORS=[0xffdd3f,0xea903a,0xe99aad,0xd70056,0xa06aa5,0x7fa77b,0x5baedb,0x67c1af];
-
-// 床グリッド（動いた場所に色が咲く）
-const gridG=new PIXI.Graphics(); app.stage.addChild(gridG);
-const CELLS=22, CW=W/CELLS, CH=H/11;
-const painted={}; // key -> {color, life}
-
-// 花オーブ（取ると刺激大＋色の花火）
-const orbs=[];
-function spawnOrb(){
-  const g=new PIXI.Graphics();
-  const col=COLORS[Math.floor(Math.random()*COLORS.length)];
-  for(let i=0;i<6;i++){
-    const a=i/6*Math.PI*2;
-    g.beginFill(col).drawEllipse(Math.cos(a)*8,Math.sin(a)*8,6,3.5).endFill();
-  }
-  g.beginFill(0xffffff).drawCircle(0,0,4).endFill();
-  g.position.set(60+Math.random()*(W-120),60+Math.random()*(H-120));
-  app.stage.addChild(g);
-  orbs.push({g,col,t:Math.random()*9});
+// 背景の漂うオーブ
+const colors=['#e99aad','#5baedb','#7fa77b','#eab031','#9d82ba'];
+for(let i=0;i<14;i++){
+  const o=document.createElement('div');
+  o.className='orb';
+  const s=6+Math.random()*18;
+  o.style.cssText+=`width:${s}px;height:${s}px;left:${Math.random()*100}vw;`+
+    `background:${colors[i%5]};animation-delay:${-Math.random()*16}s;animation-duration:${12+Math.random()*14}s`;
+  document.body.appendChild(o);
 }
-for(let i=0;i<4;i++) spawnOrb();
-
-// プレイヤー
-const player=new PIXI.Graphics();
-// 彗星コア（多層グロー＋雫テール）
-FXS.glowOrb(player,0xffffff,12,0xfff8dc);
-player.beginFill(0xffffff,.35);
-player.moveTo(-6,-7); player.bezierCurveTo(-18,-4,-22,4,-8,8);
-player.quadraticCurveTo(-13,2,-6,-7); player.closePath().endFill();
-player.beginFill(0x14141c).drawCircle(-2.5,-2,2).drawCircle(4.5,-2,2).endFill();
-player.beginFill(0xffffff).drawCircle(-1.9,-2.6,.7).drawCircle(5.1,-2.6,.7).endFill();
-player.position.set(W/2,H/2);
-app.stage.addChild(player);
-const P={x:W/2,y:H/2};
-
-// 残像
-const ghosts=[];
-
-let stim=50, alive=true, elapsed=0, lastDir='', dirRepeat=0, shake=0;
-const parts=[];
-function burst(x,y,color,n=18,spd=5){
-  for(let i=0;i<n;i++){
-    const g=new PIXI.Graphics();
-    g.beginFill(color).drawCircle(0,0,2+Math.random()*4).endFill();
-    g.position.set(x,y);
-    const a=Math.random()*Math.PI*2,s=spd*(.4+Math.random());
-    parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1});
-    app.stage.addChild(g);
-  }
-}
-const keys={};
-addEventListener('keydown',e=>keys[e.code]=true);
-addEventListener('keyup',e=>keys[e.code]=false);
-setInterval(()=>{ if(alive&&FX.playing){ elapsed++; document.getElementById('time').textContent=elapsed; } },1000);
-
-app.ticker.add(dt=>{
-  if(!FX.playing||!alive) return;
-  // 入力と「違う行動」判定
-  let dx=(keys['ArrowRight']?1:0)-(keys['ArrowLeft']?1:0);
-  let dy=(keys['ArrowDown']?1:0)-(keys['ArrowUp']?1:0);
-  const dir=`${dx},${dy}`;
-  if(dx||dy){
-    if(dir===lastDir){ dirRepeat+=dt; }
-    else { dirRepeat=0; stim+=3.5; } // 違う行動＝大きな刺激
-    lastDir=dir;
-    stim += Math.max(.02, .3-dirRepeat*.004)*dt; // 同じ行動は逓減（飽き）
-    P.x=Math.max(16,Math.min(W-16,P.x+dx*3.4*dt));
-    P.y=Math.max(16,Math.min(H-16,P.y+dy*3.4*dt));
-    // 足元に色が咲く
-    const k=`${Math.floor(P.x/CW)},${Math.floor(P.y/CH)}`;
-    painted[k]={color:COLORS[(Math.floor(P.x/CW)+Math.floor(P.y/CH))%COLORS.length],life:1};
-    // 残像
-    if(Math.random()<.5*dt){
-      const g=new PIXI.Graphics();
-      g.beginFill(0xffffff,.4).drawCircle(0,0,9).endFill();
-      g.position.set(P.x,P.y); app.stage.addChild(g);
-      ghosts.push({g,life:.7});
-    }
-  }
-  stim-=.22*dt;               // 無行動の減衰
-  stim=Math.max(0,Math.min(100,stim));
-  document.getElementById('stim').textContent=Math.floor(stim);
-  player.position.set(P.x,P.y);
-  player.scale.set(1+Math.sin(performance.now()/140)*.06);
-
-  // オーブ取得
-  for(const o of orbs){
-    o.t+=dt*.05; o.g.rotation+=.02*dt;
-    o.g.y+=Math.sin(o.t*3)*.2*dt;
-    if(Math.hypot(P.x-o.g.x,P.y-o.g.y)<22){
-      stim=Math.min(100,stim+18);
-      burst(o.g.x,o.g.y,o.col,26,6); shake=5;
-      // 周囲のセルにも色が咲き広がる
-      const cx=Math.floor(o.g.x/CW), cy=Math.floor(o.g.y/CH);
-      for(let ix=-2;ix<=2;ix++)for(let iy=-2;iy<=2;iy++)
-        painted[`${cx+ix},${cy+iy}`]={color:o.col,life:1};
-      o.g.position.set(60+Math.random()*(W-120),60+Math.random()*(H-120));
-      document.getElementById('msg').textContent='鮮やかさが戻る…！';
-    }
-  }
-  // 塗りセル描画（刺激値でフェード）
-  gridG.clear();
-  for(const k in painted){
-    const c=painted[k];
-    c.life-=.0012*dt;
-    if(c.life<=0){ delete painted[k]; continue; }
-    const [gx,gy]=k.split(',').map(Number);
-    gridG.beginFill(c.color,.35*c.life).drawRect(gx*CW+1,gy*CH+1,CW-2,CH-2).endFill();
-  }
-  // 残像・パーティクル
-  for(const g of ghosts){ g.life-=.04*dt; g.g.alpha=g.life; g.g.scale.set(1+(0.7-g.life)); if(g.life<=0) app.stage.removeChild(g.g); }
-  ghosts.splice(0,ghosts.length,...ghosts.filter(g=>g.life>0));
-  for(const p of parts){
-    p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.025*dt; p.g.alpha=p.life;
-    if(p.life<=0) app.stage.removeChild(p.g);
-  }
-  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
-  // 彩度=刺激（核となる演出）
-  cm.reset(); cm.saturate((stim-50)/50, false);
-  if(stim<25) document.getElementById('msg').textContent='…世界がモノクロになっていく';
-  if(stim<=0){
-    alive=false;
-    cm.reset(); cm.saturate(-1,false); cm.brightness(.4,true);
-    document.getElementById('msg').innerHTML='<b>暗転。</b>';
-    FX.result({ title:'暗転。', lines:[`生存 ${elapsed}秒`,'何もしないのは、緩やかな自殺だった'] });
-  }
-  shake=Math.max(0,shake-dt);
-  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
-});
 </script>
 </body>
 </html>

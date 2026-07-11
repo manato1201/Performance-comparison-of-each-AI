@@ -2,7 +2,9 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PoC: 植生ソウルライク VERDANT — ボクセル×ブルーム×派閥の検証</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🌿%3C/text%3E%3C/svg%3E">
 <style>
   html,body { margin:0; height:100%; overflow:hidden; background:#04140c; font-family:"Yu Gothic UI",sans-serif; }
   canvas { width:100vw !important; height:100vh !important; image-rendering:pixelated; display:block; }
@@ -39,6 +41,7 @@
   "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
+<script src="../common/audio.js"></script>
 </head>
 <body>
 <div id="hud">
@@ -140,19 +143,21 @@ for(let i=0;i<12;i++){
   scene.add(mono);
 }
 
-// 花畑（発光花: 参考動画の橙花）
+// 花畑（発光花: 参考動画の橙花。852wa「P.S.」オマージュ: 接近で開花するためheadを個別管理）
 const flowerGeo = new THREE.IcosahedronGeometry(.28, 0);
 const flowerMat = new THREE.MeshStandardMaterial({ color:0xf4762c, emissive:0xf4762c, emissiveIntensity:1.4, roughness:.5 });
 const stemMat = new THREE.MeshStandardMaterial({ color:0x1d5a7a, roughness:.9 });
+const flowerHeads = [];
 for(let i=0;i<80;i++){
   const x=(Math.random()-.5)*80, z=(Math.random()-.5)*80;
   if(Math.hypot(x,z)<6) continue;
   const stem = new THREE.Mesh(new THREE.BoxGeometry(.08,.8,.08), stemMat);
   stem.position.set(x,.4,z);
-  const head = new THREE.Mesh(flowerGeo, flowerMat);
+  const head = new THREE.Mesh(flowerGeo, flowerMat.clone());
   head.position.set(x,.95,z);
   head.rotation.set(Math.random(),Math.random(),0);
   scene.add(stem, head);
+  flowerHeads.push({ head, bloom:0 });
 }
 
 // ---- 植物（ボクセル樹＋発光蕾。敵対で赤へ） ----
@@ -249,6 +254,7 @@ let playing = false;
 document.getElementById('startBtn').onclick = () => {
   document.getElementById('title').classList.add('hidden');
   playing = true;
+  window.FXA.play('cave');
 };
 const keys = {};
 addEventListener('keydown', e => {
@@ -268,6 +274,7 @@ let msgTimer;
 function msg(t){ msgDiv.textContent = t; clearTimeout(msgTimer); msgTimer = setTimeout(()=>msgDiv.textContent='', 4000); }
 function finish(){
   if(ended) return; ended = true; playing = false;
+  window.FXA.play('calm'); window.FXA.sfx('clear');
   document.getElementById('resLines').innerHTML =
     `素材 ${materials} 個を収集（高度ボーナス込み）<br>派閥: ${faction} ／ 好感度: ${affinity}<br>` +
     `敵対進化した株: ${plants.filter(p=>p.hostile).length} — 攻撃はいつも見られている`;
@@ -282,21 +289,25 @@ function interact(){
       if (faction === '共生') {
         affinity++;
         p.budMat.color.setHex(0x67c1af); p.budMat.emissive.setHex(0x67c1af);
+        window.FXA.sfx('heal');
         msg('植物と対話した… 好感度+1（力の上限が上がる）');
       } else {
         if (stamina < 20) { msg('スタミナ不足！'); return; }
         stamina -= 20;
         p.hp -= (faction === '寄生') ? 3 : 1;
+        window.FXA.sfx('hit');
         p.g.rotation.z = .3; setTimeout(()=>p.g.rotation.z=0, 120);
         const gain = (faction === '寄生' ? 1 : 2) + Math.round(p.g.position.y / 4);
         if (p.hp <= 0) {
           materials += gain;
           p.g.visible = false;
+          window.FXA.sfx('break'); window.FXA.duck();
           msg(`素材+${gain}（高度ボーナス込み）`);
           if (materials >= GOAL) setTimeout(finish, 600);
         } else {
           p.hostile = true;
           p.budMat.color.setHex(0xff5040); p.budMat.emissive.setHex(0xff3020); p.budMat.emissiveIntensity = 2.2;
+          window.FXA.sfx('alarm');
           msg('植物が敵対進化した！（攻撃を学習される）');
         }
       }
@@ -347,11 +358,11 @@ function tick(){
           p.y = pf.max.y;
           vel.y = pf.bouncy ? 22 : 0;
           grounded = !pf.bouncy;
-          if (pf.bouncy) msg('ツタ足場！ 高所へ');
+          if (pf.bouncy) { window.FXA.sfx('jump'); msg('ツタ足場！ 高所へ'); }
         }
       }
     }
-    if (player.position.y < -20) { player.position.set(0,2,8); vel.set(0,0,0); msg('落下… 拠点に戻された'); }
+    if (player.position.y < -20) { player.position.set(0,2,8); vel.set(0,0,0); window.FXA.sfx('land'); msg('落下… 拠点に戻された'); }
     stamina = Math.min(100, stamina + 18*dt);
     stBar.style.width = stamina + '%';
     // 敵対個体の追尾
@@ -365,6 +376,15 @@ function tick(){
         const d = new THREE.Vector3().subVectors(player.position, p.g.position); d.y = 0;
         if (d.length() < 13) p.g.position.addScaledVector(d.normalize(), 1.6*dt);
       }
+    }
+    // 開花演出（852wa「P.S.」オマージュ: 灰色に閉じた花が接近で開き、輝きを増す）
+    // 共生派閥＝関係性が深いほど、歩いた場所の花が遠くから開く（半径6→9）
+    const bloomR = faction === '共生' ? 9 : 6;
+    for (const f of flowerHeads) {
+      const target = player.position.distanceTo(f.head.position) < bloomR ? 1 : 0;
+      f.bloom += (target - f.bloom) * Math.min(1, dt * 3.5);
+      f.head.material.emissiveIntensity = 1.4 + f.bloom * 1.2;   // 1.4 → 2.6
+      f.head.scale.setScalar(1 + f.bloom * .3);                  // 1.0 → 1.3
     }
     followers.forEach((f,i)=>{
       const a = now/600 + i*2.1;

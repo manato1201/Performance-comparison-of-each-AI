@@ -12,7 +12,7 @@ blockquote { border-left:5px solid var(--sub); background:#fdf6ef; }
 
 <span class="badge">ゲームジャム規模</span> <span class="badge">動詞駆動デザイン</span>
 
-> 🧪 PoC: [poc/12_verb-games/index.html](../poc/12_verb-games/index.html)（pixi.js — Let'sDoThis: 刺激値→彩度フィルタ直結の検証）
+> 🧪 PoC: [poc/12_verb-games/index.html](../poc/12_verb-games/index.html)（**12本すべて個別PoC化済み**・ランチャーから起動。各ゲームにScene遷移＋プロシージャルBGM/SFX＝audio.js搭載）
 
 ## 1. コンセプト
 

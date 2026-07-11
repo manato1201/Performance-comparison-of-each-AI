@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ワイヤーキング — 飛ばす・吸い付く・蹴る・飛ぶ</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🕸️%3C/text%3E%3C/svg%3E">
+<style>
+  body { margin:0; background:#082f50; font-family:"Yu Gothic UI",sans-serif; color:#fff;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:13px; margin:8px 0 4px; color:#83c2e2; }
+  #stage { border-radius:10px; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5); cursor:crosshair; max-width:100%; }
+  #stage canvas { max-width:100%; height:auto; display:block; }
+  #hud { font-size:13px; margin:8px; } #hud b { color:#f7dc41; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.4.2/pixi.min.js"></script>
+<script src="https://unpkg.com/pixi-filters@5.3.0/dist/browser/pixi-filters.js"></script>
+<script src="../common/fx.js"></script>
+<script src="../common/audio.js"></script>
+</head>
+<body>
+<h1>🕸 クリック長押し=近くのアンカーへワイヤー射出→振り子スイング / 離す=手放して飛ぶ。敵はスイングで蹴散らせ。右端の王冠へ！</h1>
+<div id="stage"></div>
+<div id="hud">タイム: <b id="tm">0.0</b>秒　蹴った敵: <b id="kick">0</b></div>
+<script>
+const W=880,H=430;
+const app=new PIXI.Application({width:W,height:H,background:0x0d3a5e,antialias:true});
+document.getElementById('stage').appendChild(app.view);
+FX.attach(app,{title:'ワイヤーキング',sub:'飛ばす・吸い付く・蹴る・飛ぶ — 空中は、王の領土',
+  accent:0x83c2e2,accent2:0xf7dc41,bloomThreshold:.5,onStart:()=>{FXA.play('field');t0=performance.now();}});
+
+// 峡谷背景
+const bg=new PIXI.Graphics();
+for(let i=0;i<16;i++) bg.beginFill(0x0d3a5e,1-i*.015).drawRect(0,i*H/16,W,H/16+1).endFill();
+for(let i=0;i<6;i++){ // 遠景の崖
+  bg.beginFill(0x0a2c48,.8).drawPolygon([i*160-30,H, i*160+40,140+((i*31)%80), i*160+120,H]).endFill();
+}
+bg.beginFill(0x082038).drawRect(0,H-24,W,24).endFill();
+for(let x=0;x<W;x+=18) bg.beginFill(0x061a2c).drawPolygon([x,H,x+9,H-14,x+18,H]).endFill(); // 奈落トゲ
+app.stage.addChild(bg);
+
+// アンカー（発光オーブ）
+const anchors=[{x:150,y:90},{x:320,y:70},{x:470,y:110},{x:620,y:70},{x:760,y:100}];
+for(const a of anchors){
+  const g=new PIXI.Graphics();
+  FXS.glowOrb(g,0x83c2e2,10,0xffffff);
+  FXS.crystal(g,0x49afd3,7,6,a.x|0);
+  g.position.set(a.x,a.y);
+  app.stage.addChild(g); a.g=g;
+}
+// 敵（トゲブロブ・ふわふわ）
+const foes=[];
+for(const [x,y] of [[300,240],[520,220],[680,260]]){
+  const c=new PIXI.Container();
+  const g=new PIXI.Graphics();
+  FXS.burstStar(g,0x1e5697,16,10,.55,x|0);
+  FXS.blob(g,0x2a72b0,10,8,.3,(x+y)|0);
+  g.beginFill(0xffffff).drawCircle(-4,-2,2.6).drawCircle(4,-2,2.6).endFill();
+  g.beginFill(0x082038).drawCircle(-3.4,-2,1.3).drawCircle(4.6,-2,1.3).endFill();
+  c.addChild(g);
+  c.position.set(x,y); app.stage.addChild(c);
+  foes.push({c,x,y,t:Math.random()*9,dead:false});
+}
+// 王冠（ゴール）
+const crown=new PIXI.Container();
+const cg=new PIXI.Graphics();
+FXS.glowOrb(cg,0xf7dc41,14,0xffffff,0,0);
+cg.beginFill(0xf7dc41).drawPolygon([-16,8,-16,-4,-9,2,-3,-10,3,2,9,-10,16,-4,16,8]).endFill();
+cg.beginFill(0xe35b74).drawCircle(-8,3,2.2).drawCircle(8,3,2.2).endFill();
+crown.addChild(cg);
+crown.position.set(840,150); app.stage.addChild(crown);
+
+// プレイヤー（マント姿の小さき王）
+const hero=new PIXI.Container();
+const hg=new PIXI.Graphics(); hero.addChild(hg);
+function drawHero(){
+  hg.clear();
+  hg.beginFill(0xe35b74,.9); // マント（ベジェ・なびき）
+  hg.moveTo(-6,-14); hg.bezierCurveTo(-18,-6,-16,10,-10,14);
+  hg.quadraticCurveTo(-8,2,-4,-8); hg.closePath().endFill();
+  FXS.blob(hg,0x83c2e2,12,9,.2,7,1,0,-8);
+  hg.beginFill(0x082038).drawCircle(-3,-10,1.8).drawCircle(4,-10,1.8).endFill();
+  hg.beginFill(0xf7dc41).drawPolygon([-6,-19,-6,-24,-3,-20,0,-26,3,-20,6,-24,6,-19]).endFill(); // ミニ王冠
+  hg.beginFill(0xe07b24).drawEllipse(0,4,5,2.5).endFill();
+}
+drawHero();
+app.stage.addChild(hero);
+const P={x:70,y:150,vx:0,vy:0};
+let attached=null, t0=0, kicks=0, over=false;
+const wire=new PIXI.Graphics(); app.stage.addChild(wire);
+
+app.view.addEventListener('pointerdown',e=>{
+  if(!FX.playing||over) return;
+  const r=app.view.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width), my=(e.clientY-r.top)*(H/r.height);
+  // クリック位置に最も近いアンカーへ吸い付く
+  let best=null,bd=1e9;
+  for(const a of anchors){ const d=Math.hypot(a.x-mx,a.y-my); if(d<bd){bd=d;best=a;} }
+  if(best&&bd<120){ attached=best; FXA.sfx('ui'); best.g.scale.set(1.4); }
+});
+app.view.addEventListener('pointerup',()=>{
+  if(attached){ attached.g.scale.set(1); attached=null; FXA.sfx('jump'); }
+});
+const parts=[];
+function burst(x,y,c,n=14,s=5){for(let i=0;i<n;i++){const g=new PIXI.Graphics();
+  g.beginFill(c).drawCircle(0,0,2+Math.random()*3).endFill(); g.position.set(x,y);
+  const a=Math.random()*7; parts.push({g,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1}); app.stage.addChild(g);}}
+let shake=0;
+function respawn(msg){
+  P.x=70; P.y=150; P.vx=0; P.vy=0; attached=null;
+  shake=8; FXA.sfx('land');
+  document.getElementById('kick').textContent=kicks;
+}
+app.ticker.add(dt=>{
+  if(!FX.playing||over) return;
+  const now=performance.now();
+  document.getElementById('tm').textContent=((now-t0)/1000).toFixed(1);
+  // 物理
+  P.vy+=.22*dt;
+  if(attached){
+    // 振り子: アンカーからの距離を保つ（張力）
+    const dx=P.x-attached.x, dy=P.y-attached.y;
+    const d=Math.hypot(dx,dy)||1, rest=Math.min(d,150);
+    // 速度を接線方向に投影
+    const nx=dx/d, ny=dy/d;
+    const dot=P.vx*nx+P.vy*ny;
+    if(d>rest||dot>0){ P.vx-=nx*dot; P.vy-=ny*dot; }
+    // 位置補正
+    if(d>150){ P.x=attached.x+nx*150; P.y=attached.y+ny*150; }
+    P.vx*=Math.pow(.998,dt); P.vy*=Math.pow(.998,dt);
+    P.vx+= -nx*0*dt;
+  } else {
+    P.vx*=Math.pow(.999,dt);
+  }
+  P.x+=P.vx*dt; P.y+=P.vy*dt;
+  if(P.x<14){P.x=14;P.vx=Math.abs(P.vx)*.5;}
+  if(P.x>W-14){P.x=W-14;P.vx=-Math.abs(P.vx)*.5;}
+  if(P.y<14){P.y=14;P.vy=Math.abs(P.vy)*.3;}
+  if(P.y>H-30) return respawn(); // 奈落
+  hero.position.set(P.x,P.y);
+  hero.rotation=P.vx*.04;
+  // ワイヤー描画
+  wire.clear();
+  if(attached){
+    wire.lineStyle(2.5,0x83c2e2,.9).moveTo(P.x,P.y-4)
+      .quadraticCurveTo((P.x+attached.x)/2+P.vx*2,(P.y+attached.y)/2,attached.x,attached.y);
+    wire.lineStyle(1,0xffffff,.4).moveTo(P.x,P.y-4).lineTo(attached.x,attached.y);
+  }
+  // スイングの疾走感: 速いと残像
+  const spd=Math.hypot(P.vx,P.vy);
+  if(spd>4&&Math.random()<.4*dt){
+    const g=new PIXI.Graphics();
+    g.beginFill(0x83c2e2,.4).drawCircle(0,0,5).endFill();
+    g.position.set(P.x,P.y); app.stage.addChild(g);
+    parts.push({g,vx:0,vy:0,life:.5});
+  }
+  // 敵: 蹴る（高速接触）
+  for(const f of foes){
+    if(f.dead) continue;
+    f.t+=dt*.04; f.c.y=f.y+Math.sin(f.t*2)*10; f.c.rotation+=.01*dt;
+    if(Math.hypot(f.c.x-P.x,f.c.y-P.y)<26){
+      if(spd>3.5){
+        f.dead=true; kicks++; document.getElementById('kick').textContent=kicks;
+        burst(f.c.x,f.c.y,0xf7dc41,18,6); burst(f.c.x,f.c.y,0x1e5697,12,7);
+        FXA.sfx('hit'); FXA.duck(.3); shake=6;
+        f.c.visible=false;
+      } else { // 遅いと弾かれる
+        P.vx=Math.sign(P.x-f.c.x)*5; P.vy=-3; FXA.sfx('alarm'); shake=4;
+      }
+    }
+  }
+  // 王冠
+  crown.rotation=Math.sin(now/500)*.1;
+  if(Math.hypot(840-P.x,150-P.y)<30){
+    over=true; FXA.play('calm'); FXA.sfx('clear');
+    for(let i=0;i<40;i++) burst(840,150,[0xf7dc41,0x83c2e2][i%2],1,6);
+    FX.result({title:'👑 ワイヤーキング戴冠',lines:[`タイム: ${((now-t0)/1000).toFixed(1)}秒 / 蹴った敵: ${kicks}`,
+      '空中で手放す勇気が、距離になる']});
+  }
+  for(const p of parts){ p.g.x+=p.vx*dt; p.g.y+=p.vy*dt; p.life-=.03*dt; p.g.alpha=p.life;
+    if(p.life<=0) app.stage.removeChild(p.g); }
+  parts.splice(0,parts.length,...parts.filter(p=>p.life>0));
+  shake=Math.max(0,shake-dt);
+  app.stage.position.set((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+});
+</script>
+</body>
+</html>

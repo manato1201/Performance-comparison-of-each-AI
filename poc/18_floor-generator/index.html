@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>フロアマップ自動生成 — データ駆動ダンジョン（WebGPU+TSL）</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E🏰%3C/text%3E%3C/svg%3E">
+<style>
+  html,body { margin:0; height:100%; overflow:hidden; background:#07100c; font-family:"Yu Gothic UI",sans-serif; }
+  canvas { display:block; }
+  #panel { position:fixed; top:10px; left:10px; z-index:10; color:#e8f4d8; width:250px;
+    background:rgba(4,20,12,.82); border:1px solid rgba(194,218,117,.35); border-radius:12px;
+    padding:12px 14px; backdrop-filter:blur(6px); font-size:12px; }
+  #panel h1 { font-size:13px; margin:0 0 8px; color:#c2da75; letter-spacing:.08em; }
+  #panel label { display:block; margin:6px 0 2px; color:#9db98a; }
+  #panel input[type=text] { width:120px; background:#0a2416; color:#e8f4d8; border:1px solid #3a5a40;
+    border-radius:6px; padding:4px 8px; }
+  #panel input[type=range] { width:100%; }
+  #panel button { padding:6px 18px; border:1px solid #c2da75; border-radius:14px; cursor:pointer;
+    background:rgba(194,218,117,.15); color:#c2da75; font-size:12px; margin-top:6px; }
+  #panel button:hover { background:#c2da75; color:#0a2416; }
+  #panel .chk { margin-top:8px; }
+  #meta { margin-top:10px; padding-top:8px; border-top:1px solid rgba(194,218,117,.25);
+    line-height:1.8; color:#b8d0a8; white-space:pre-line; }
+  #backend { position:fixed; bottom:10px; right:12px; z-index:10; color:#6d8a68; font-size:11px; }
+  #legend { position:fixed; bottom:10px; left:12px; z-index:10; color:#9db98a; font-size:11px; line-height:1.8;
+    background:rgba(4,20,12,.7); padding:8px 12px; border-radius:8px; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h1>🏰 フロア自動生成（データ駆動）</h1>
+  <label>seed</label><input type="text" id="seed" value="42">
+  <label>部屋数: <span id="rcLabel">25</span></label>
+  <input type="range" id="rc" min="10" max="60" value="25">
+  <button id="gen">⟳ 生成</button>
+  <div class="chk"><label><input type="checkbox" id="heat"> 🔥 ヒートマップ（深度）</label></div>
+  <div class="chk"><label><input type="checkbox" id="graph" checked> 🕸 グラフ表示（MST/ループ）</label></div>
+  <div id="meta"></div>
+</div>
+<div id="legend">💡 松明=TSL明滅　📦 宝箱　🔺 敵(tier色)　👑 ボス=深部<br>ドラッグ回転 / ホイールズーム</div>
+<div id="backend"></div>
+
+<script src="./floorgen.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.webgpu.js",
+  "three/tsl": "https://unpkg.com/three@0.170.0/build/three.webgpu.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { color, time, sin, positionWorld, float } from 'three/tsl';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x07100c);
+scene.fog = new THREE.Fog(0x07100c, 60, 160);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, .1, 400);
+camera.position.set(0, 55, 48);
+
+const renderer = new THREE.WebGPURenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+await renderer.init();
+document.getElementById('backend').textContent =
+  'renderer: ' + (renderer.backend.isWebGPUBackend ? 'WebGPU + TSL' : 'WebGL2 fallback (+TSL)');
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xc2da75, 0x0a1a10, .8));
+const sun = new THREE.DirectionalLight(0xfff2d0, 1.0);
+sun.position.set(30, 60, 20);
+scene.add(sun);
+
+// ---- TSLノードマテリアル: 松明の炎（時間×位置で明滅） ----
+const torchMat = new THREE.MeshStandardNodeMaterial({ color: 0x442200 });
+torchMat.emissiveNode = color(0xffb347).mul(
+  sin( time.mul(9).add(positionWorld.x.mul(3.1)).add(positionWorld.z.mul(2.3)) )
+    .mul(.25).add(.85)
+);
+
+// ---- マテリアル ----
+const MAT = {
+  floor: null, // InstancedMeshで個別色
+  wall:  new THREE.MeshStandardMaterial({ color: 0x2a3d33, roughness: .95 }),
+  door:  new THREE.MeshStandardMaterial({ color: 0x7a5a30, roughness: .8 }),
+  pillar:new THREE.MeshStandardMaterial({ color: 0x3a5044, roughness: .9 }),
+  chest: new THREE.MeshStandardMaterial({ color: 0xc9a06c, roughness: .7 }),
+};
+
+const TIER_COLORS = [0x89c997, 0x5baedb, 0xeab031, 0xe07b24, 0xda2730, 0x8a1a3a];
+
+let world = null, graphGroup = null, floorMesh = null, floorData = null;
+
+function heatColor(t){ // 深度0..1 → 青緑→黄→赤
+  const c = new THREE.Color();
+  if (t < .5) c.lerpColors(new THREE.Color(0x2a8bc0), new THREE.Color(0xeab031), t*2);
+  else        c.lerpColors(new THREE.Color(0xeab031), new THREE.Color(0xda2730), (t-.5)*2);
+  return c;
+}
+
+function build(floor){
+  if (world) { scene.remove(world); world.traverse(o=>{ o.geometry?.dispose?.(); }); }
+  if (graphGroup) { scene.remove(graphGroup); }
+  world = new THREE.Group(); graphGroup = new THREE.Group();
+  floorData = floor;
+  const { grid, meta, props, spawns, rooms, edges } = floor;
+  const H = grid.length, W = grid[0].length;
+  const ox = -W/2, oz = -H/2;
+  const T = FloorGen.TILE;
+
+  // 床（InstancedMesh・ヒートマップ切替は色の書き換え）
+  let floorCount = 0;
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) if (grid[y][x]===T.FLOOR||grid[y][x]===T.DOOR) floorCount++;
+  floorMesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, .2, 1),
+    new THREE.MeshStandardMaterial({ roughness:.9 }), floorCount);
+  const m4 = new THREE.Matrix4();
+  let i = 0;
+  floorMesh.userData.tiles = [];
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++) {
+    if (grid[y][x]!==T.FLOOR && grid[y][x]!==T.DOOR) continue;
+    m4.setPosition(ox+x+.5, -.1, oz+y+.5);
+    floorMesh.setMatrixAt(i, m4);
+    floorMesh.userData.tiles.push({x, y, depth: meta.tileDepth[y][x]});
+    i++;
+  }
+  world.add(floorMesh);
+  applyHeat();
+
+  // 壁・扉（InstancedMesh）
+  let wallCount = 0, doorCount = 0;
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++){ if(grid[y][x]===T.WALL) wallCount++; if(grid[y][x]===T.DOOR) doorCount++; }
+  const walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1.6, 1), MAT.wall, wallCount);
+  const doors = new THREE.InstancedMesh(new THREE.BoxGeometry(.9, 1.2, .9), MAT.door, doorCount);
+  let wi=0, di=0;
+  for (let y=0;y<H;y++) for (let x=0;x<W;x++){
+    if (grid[y][x]===T.WALL){ m4.setPosition(ox+x+.5,.8,oz+y+.5); walls.setMatrixAt(wi++, m4); }
+    if (grid[y][x]===T.DOOR){ m4.setPosition(ox+x+.5,.6,oz+y+.5); doors.setMatrixAt(di++, m4); }
+  }
+  world.add(walls, doors);
+
+  // 装飾
+  for (const p of props){
+    let mesh;
+    if (p.type==='torch'){
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(.22,.5,.22), torchMat);
+      mesh.position.set(ox+p.x+.5, 1.0, oz+p.y+.5);
+    } else if (p.type==='pillar'){
+      mesh = new THREE.Mesh(new THREE.CylinderGeometry(.3,.38,1.8,6), MAT.pillar);
+      mesh.position.set(ox+p.x+.5, .9, oz+p.y+.5);
+    } else { // chest
+      mesh = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(.7,.4,.5), MAT.chest);
+      const lid  = new THREE.Mesh(new THREE.BoxGeometry(.7,.18,.5),
+        new THREE.MeshStandardMaterial({ color:0xfdda83, emissive:0x8a6a20, emissiveIntensity:.6 }));
+      lid.position.y = .29;
+      mesh.add(body, lid);
+      mesh.position.set(ox+p.x+.5, .2, oz+p.y+.5);
+    }
+    world.add(mesh);
+  }
+  // スポーン
+  for (const s of spawns){
+    if (s.type==='boss'){
+      const boss = new THREE.Mesh(new THREE.IcosahedronGeometry(.9, 0),
+        new THREE.MeshStandardMaterial({ color:0xda2730, emissive:0xda2730, emissiveIntensity:.8 }));
+      boss.position.set(ox+s.x+.5, 1.1, oz+s.y+.5);
+      boss.userData.spin = true;
+      world.add(boss);
+    } else {
+      const e = new THREE.Mesh(new THREE.OctahedronGeometry(.3, 0),
+        new THREE.MeshStandardMaterial({ color: TIER_COLORS[Math.min(s.tier, 5)],
+          emissive: TIER_COLORS[Math.min(s.tier,5)], emissiveIntensity:.5 }));
+      e.position.set(ox+s.x+.5, .55, oz+s.y+.5);
+      world.add(e);
+    }
+  }
+  // スタート標識
+  const start = rooms.find(r=>r.id===meta.startRoomId);
+  if (start){
+    const flag = new THREE.Mesh(new THREE.ConeGeometry(.45,1.2,5),
+      new THREE.MeshStandardMaterial({ color:0x67c1af, emissive:0x2a8b7a, emissiveIntensity:.7 }));
+    flag.position.set(ox+start.x+start.w/2, 1.4, oz+start.y+start.h/2);
+    world.add(flag);
+  }
+  scene.add(world);
+
+  // グラフオーバーレイ（MST=水色 / ループ=桃色）
+  const mkLine = (a, b, col) => {
+    const g = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(ox+a.x+a.w/2, 2.4, oz+a.y+a.h/2),
+      new THREE.Vector3(ox+b.x+b.w/2, 2.4, oz+b.y+b.h/2)]);
+    return new THREE.Line(g, new THREE.LineBasicMaterial({ color: col, transparent:true, opacity:.85 }));
+  };
+  const byId = Object.fromEntries(rooms.map(r=>[r.id,r]));
+  for (const e of edges) graphGroup.add(mkLine(byId[e.a], byId[e.b], e.isLoop ? 0xf3aecc : 0x67e0e0));
+  for (const r of rooms){
+    const node = new THREE.Mesh(new THREE.SphereGeometry(.28, 8, 8),
+      new THREE.MeshBasicMaterial({ color: r.type==='boss'?0xda2730 : r.type==='start'?0x67c1af : 0xffffff }));
+    node.position.set(ox+r.x+r.w/2, 2.4, oz+r.y+r.h/2);
+    graphGroup.add(node);
+  }
+  graphGroup.visible = document.getElementById('graph').checked;
+  scene.add(graphGroup);
+
+  // meta表示
+  document.getElementById('meta').textContent =
+    `生成: ${meta.genMs.toFixed(1)}ms\n部屋: ${meta.roomCount} / ループ辺: ${meta.loopCount}\n` +
+    `最深depth: ${meta.maxDepth}（ボス部屋 #${meta.bossRoomId}）\nグリッド: ${meta.width}×${meta.height}\n` +
+    `props: ${props.length} / 敵: ${spawns.length-1}＋ボス`;
+}
+
+function applyHeat(){
+  if (!floorMesh || !floorData) return;
+  const heat = document.getElementById('heat').checked;
+  const maxD = Math.max(1, floorData.meta.maxDepth);
+  const base = new THREE.Color(0x55645a);
+  floorMesh.userData.tiles.forEach((t, i) => {
+    floorMesh.setColorAt(i, heat && t.depth >= 0 ? heatColor(t.depth / maxD) : base);
+  });
+  floorMesh.instanceColor.needsUpdate = true;
+}
+
+// ---- UI ----
+function regen(){
+  const seed = document.getElementById('seed').value || '42';
+  const rc = parseInt(document.getElementById('rc').value, 10);
+  build(FloorGen.generateFloor(isNaN(+seed) ? seed : +seed, { roomCount: rc }));
+}
+document.getElementById('gen').onclick = regen;
+document.getElementById('rc').oninput = e => document.getElementById('rcLabel').textContent = e.target.value;
+document.getElementById('heat').onchange = applyHeat;
+document.getElementById('graph').onchange = e => { if (graphGroup) graphGroup.visible = e.target.checked; };
+regen();
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  world?.traverse(o => { if (o.userData.spin) o.rotation.y += .02; });
+  renderer.render(scene, camera);
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
